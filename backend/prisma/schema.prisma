@@ -1,0 +1,463 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN
+  OPERATOR
+}
+
+enum InstanceStatus {
+  DISCONNECTED
+  CONNECTING
+  CONNECTED
+  BANNED
+}
+
+enum InstanceChannel {
+  BAILEYS
+  CLOUD_API
+}
+
+enum MessageStatus {
+  PENDING
+  SENT
+  DELIVERED
+  READ
+  FAILED
+}
+
+enum MessageDirection {
+  INBOUND
+  OUTBOUND
+}
+
+enum TemplateStatus {
+  PENDING
+  APPROVED
+  REJECTED
+}
+
+enum CampaignStatus {
+  DRAFT
+  SCHEDULED
+  RUNNING
+  PAUSED
+  COMPLETED
+  CANCELLED
+}
+
+model Company {
+  id        String   @id @default(uuid())
+  name      String
+  document  String?  @unique
+  email     String   @unique
+  phone     String?
+  plan      String   @default("free")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  users     User[]
+  instances Instance[]
+  contacts  Contact[]
+  campaigns Campaign[]
+  templates Template[]
+  flows     Flow[]
+
+  @@map("companies")
+}
+
+model User {
+  id        String   @id @default(uuid())
+  companyId String
+  name      String
+  email     String   @unique
+  password  String
+  role      UserRole @default(OPERATOR)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@map("users")
+}
+
+model Instance {
+  id              String          @id @default(uuid())
+  companyId       String
+  name            String
+  description     String?
+  channel         InstanceChannel @default(BAILEYS)
+  status          InstanceStatus  @default(DISCONNECTED)
+  phoneNumber     String?
+  profileName     String?
+  profilePicture  String?
+  apiToken        String          @unique @default(uuid())
+
+  // Baileys specific
+  sessionData     Json?
+  qrCode          String?
+
+  // Cloud API specific
+  wabaId          String?
+  phoneNumberId   String?
+  accessToken     String?
+  webhookSecret   String?
+
+  // Webhooks
+  webhookUrl      String?
+  webhookEvents   String[]        @default([])
+
+  // Metrics
+  messagesSent    Int             @default(0)
+  messagesReceived Int            @default(0)
+
+  // Settings
+  rejectCalls     Boolean         @default(false)
+  alwaysOnline    Boolean         @default(false)
+  readMessages    Boolean         @default(true)
+
+  isActive        Boolean         @default(true)
+  createdAt       DateTime        @default(now())
+  updatedAt       DateTime        @updatedAt
+
+  company           Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  messages          Message[]
+  typebotIntegration TypebotIntegration?
+  n8nIntegration    N8nIntegration?
+  campaignInstances CampaignInstance[]
+
+  @@map("instances")
+}
+
+model Contact {
+  id          String   @id @default(uuid())
+  companyId   String
+  name        String
+  phoneNumber String
+  email       String?
+  tags        String[] @default([])
+  metadata    Json?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  messages          Message[]
+  campaignContacts  CampaignContact[]
+
+  @@unique([companyId, phoneNumber])
+  @@map("contacts")
+}
+
+model Message {
+  id          String           @id @default(uuid())
+  instanceId  String
+  contactId   String?
+  remoteJid   String
+  messageId   String           @unique
+  direction   MessageDirection
+  status      MessageStatus    @default(PENDING)
+  type        String           @default("text")
+  content     String
+  mediaUrl    String?
+  mediaType   String?
+  templateId  String?
+  metadata    Json?
+  sentAt      DateTime?
+  deliveredAt DateTime?
+  readAt      DateTime?
+  failedAt    DateTime?
+  failReason  String?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  contact  Contact? @relation(fields: [contactId], references: [id], onDelete: SetNull)
+
+  @@index([instanceId, remoteJid])
+  @@map("messages")
+}
+
+model Template {
+  id           String         @id @default(uuid())
+  companyId    String
+  name         String
+  language     String         @default("pt_BR")
+  category     String         @default("MARKETING")
+  status       TemplateStatus @default(PENDING)
+  headerType   String?
+  headerContent String?
+  bodyText     String
+  footerText   String?
+  buttons      Json?
+  metaId       String?        @unique
+  rejectedReason String?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+
+  company Company @relation(fields: [companyId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, name])
+  @@map("templates")
+}
+
+model Campaign {
+  id            String         @id @default(uuid())
+  companyId     String
+  name          String
+  description   String?
+  status        CampaignStatus @default(DRAFT)
+  messageType   String         @default("text")
+  messageContent String
+  mediaUrl      String?
+  templateId    String?
+  delay         Int            @default(3000)
+  scheduledAt   DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  totalContacts Int            @default(0)
+  sentCount     Int            @default(0)
+  deliveredCount Int           @default(0)
+  failedCount   Int            @default(0)
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  campaignInstances CampaignInstance[]
+  campaignContacts  CampaignContact[]
+
+  @@map("campaigns")
+}
+
+model CampaignInstance {
+  id         String   @id @default(uuid())
+  campaignId String
+  instanceId String
+  createdAt  DateTime @default(now())
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, instanceId])
+  @@map("campaign_instances")
+}
+
+model CampaignContact {
+  id         String        @id @default(uuid())
+  campaignId String
+  contactId  String
+  status     MessageStatus @default(PENDING)
+  sentAt     DateTime?
+  error      String?
+  createdAt  DateTime      @default(now())
+  updatedAt  DateTime      @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  contact  Contact  @relation(fields: [contactId], references: [id], onDelete: Cascade)
+
+  @@unique([campaignId, contactId])
+  @@map("campaign_contacts")
+}
+
+model TypebotIntegration {
+  id           String   @id @default(uuid())
+  instanceId   String   @unique
+  typebotId    String
+  typebotUrl   String
+  triggerType  String   @default("all")
+  triggerValue String?
+  variables    Json?
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@map("typebot_integrations")
+}
+
+model N8nIntegration {
+  id          String   @id @default(uuid())
+  instanceId  String   @unique
+  webhookUrl  String
+  events      String[] @default(["message.received"])
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  instance Instance @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@map("n8n_integrations")
+}
+
+model AuditLog {
+  id        String   @id @default(uuid())
+  userId    String?
+  action    String
+  entity    String
+  entityId  String?
+  oldData   Json?
+  newData   Json?
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+
+  @@map("audit_logs")
+}
+
+// ============================================
+// FlowBuilder - Automação de Chatbot
+// ============================================
+
+enum FlowStatus {
+  DRAFT
+  ACTIVE
+  INACTIVE
+}
+
+enum FlowTriggerType {
+  KEYWORD      // Palavra-chave específica
+  ALL          // Todas as mensagens
+  BUTTON_REPLY // Resposta de botão
+  LIST_REPLY   // Resposta de lista
+  WEBHOOK      // Trigger externo
+}
+
+model Flow {
+  id           String          @id @default(uuid())
+  companyId    String
+  instanceId   String?         // null = disponível para todas instâncias
+  name         String
+  description  String?
+  status       FlowStatus      @default(DRAFT)
+
+  // Trigger configuration
+  triggerType  FlowTriggerType @default(KEYWORD)
+  triggerValue String?         // Palavra-chave ou padrão regex
+
+  // Metadata
+  version      Int             @default(1)
+  variables    Json?           // Variáveis globais do fluxo
+  settings     Json?           // Configurações adicionais
+
+  createdAt    DateTime        @default(now())
+  updatedAt    DateTime        @updatedAt
+
+  company      Company         @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  nodes        FlowNode[]
+  edges        FlowEdge[]
+  sessions     FlowSession[]
+
+  @@index([companyId, status])
+  @@index([triggerType, triggerValue])
+  @@map("flows")
+}
+
+enum FlowNodeType {
+  START           // Ponto de entrada
+  MESSAGE         // Mensagem de texto
+  IMAGE           // Enviar imagem
+  AUDIO           // Enviar áudio
+  VIDEO           // Enviar vídeo
+  DOCUMENT        // Enviar documento
+  BUTTONS         // Mensagem com botões
+  LIST            // Mensagem com lista/menu
+  CONDITION       // Condicional (if/else)
+  DELAY           // Aguardar X segundos
+  SET_VARIABLE    // Definir variável
+  HTTP_REQUEST    // Requisição HTTP externa
+  TRANSFER        // Transferir para atendente/fluxo
+  GO_TO_FLOW      // Ir para outro fluxo
+  END             // Finalizar fluxo
+}
+
+model FlowNode {
+  id        String       @id @default(uuid())
+  flowId    String
+  type      FlowNodeType
+
+  // Posição no canvas
+  positionX Float        @default(0)
+  positionY Float        @default(0)
+
+  // Configuração específica do node (JSON)
+  data      Json
+
+  // Metadados
+  label     String?
+
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  flow         Flow       @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  sourceEdges  FlowEdge[] @relation("SourceNode")
+  targetEdges  FlowEdge[] @relation("TargetNode")
+
+  @@index([flowId])
+  @@map("flow_nodes")
+}
+
+model FlowEdge {
+  id           String  @id @default(uuid())
+  flowId       String
+  sourceNodeId String
+  targetNodeId String
+
+  // Handles para conexões específicas (ex: "yes", "no", "button_1")
+  sourceHandle String?
+  targetHandle String?
+
+  // Label opcional
+  label        String?
+
+  // Condição para seguir esta aresta (opcional)
+  condition    Json?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  flow       Flow     @relation(fields: [flowId], references: [id], onDelete: Cascade)
+  sourceNode FlowNode @relation("SourceNode", fields: [sourceNodeId], references: [id], onDelete: Cascade)
+  targetNode FlowNode @relation("TargetNode", fields: [targetNodeId], references: [id], onDelete: Cascade)
+
+  @@index([flowId])
+  @@map("flow_edges")
+}
+
+// Sessão de um usuário em um fluxo
+model FlowSession {
+  id            String    @id @default(uuid())
+  flowId        String
+  instanceId    String
+  remoteJid     String    // Número do usuário
+
+  currentNodeId String?   // Nó atual
+  variables     Json?     // Variáveis da sessão
+  context       Json?     // Contexto adicional
+
+  // Status
+  isActive      Boolean   @default(true)
+  waitingInput  Boolean   @default(false)
+
+  // Timestamps
+  startedAt     DateTime  @default(now())
+  lastActivity  DateTime  @default(now())
+  completedAt   DateTime?
+
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  flow Flow @relation(fields: [flowId], references: [id], onDelete: Cascade)
+
+  @@unique([flowId, instanceId, remoteJid])
+  @@index([instanceId, remoteJid, isActive])
+  @@map("flow_sessions")
+}

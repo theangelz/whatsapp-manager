@@ -1,0 +1,36 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(chmod:*)",
+      "Bash(docker-compose up:*)",
+      "Bash(docker rm:*)",
+      "Bash(redis-cli ping:*)",
+      "Bash(npm install:*)",
+      "Bash(npx prisma generate:*)",
+      "Bash(npm run build:*)",
+      "Bash(npx prisma db push:*)",
+      "Bash(npm run db:seed:*)",
+      "Bash(curl:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(nc:*)",
+      "Bash(iptables:*)",
+      "Bash(pkill:*)",
+      "Bash(pm2 restart:*)",
+      "Bash(pm2 start:*)",
+      "Bash(pm2 delete:*)",
+      "Bash(lsof:*)",
+      "Bash(pm2 save:*)",
+      "Bash(ls:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker exec:*)",
+      "Bash(docker inspect:*)",
+      "Bash(git init:*)",
+      "Bash(git add:*)",
+      "Bash(git rm:*)",
+      "Bash(git rm -r --cached .claude/)",
+      "Bash(git commit:*)",
+      "Bash(git config:*)"
+    ]
+  }
+}

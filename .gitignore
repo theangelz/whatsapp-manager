@@ -1,0 +1,58 @@
+# Dependencies
+node_modules/
+.pnp/
+.pnp.js
+
+# Build outputs
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Sessions (Baileys)
+sessions/
+*.session
+
+# Database
+*.db
+*.sqlite
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Credentials
+credenciais.txt
+acme.json
+
+# Temp
+tmp/
+temp/
+.tmp/
+
+# Test
+coverage/
+.nyc_output/
+
+# Misc
+*.bak
+*.backup
+Sjnetworkfront-main/
+.claude/
