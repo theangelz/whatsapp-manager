@@ -55,8 +55,10 @@ export function Instances() {
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showQRModal, setShowQRModal] = useState(false)
   const [showConfigModal, setShowConfigModal] = useState(false)
+  const [showWebhookModal, setShowWebhookModal] = useState(false)
   const [selectedInstance, setSelectedInstance] = useState<Instance | null>(null)
   const [configInstance, setConfigInstance] = useState<Instance | null>(null)
+  const [webhookInstance, setWebhookInstance] = useState<Instance | null>(null)
   const [qrCode, setQrCode] = useState<string | null>(null)
   const [newInstance, setNewInstance] = useState({
     name: '',
@@ -68,6 +70,10 @@ export function Instances() {
     phoneNumberId: '',
     accessToken: '',
     webhookSecret: '',
+    webhookUrl: '',
+    webhookEvents: [] as string[],
+  })
+  const [webhookConfig, setWebhookConfig] = useState({
     webhookUrl: '',
     webhookEvents: [] as string[],
   })
@@ -145,6 +151,19 @@ export function Instances() {
     },
   })
 
+  const updateWebhookMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: typeof webhookConfig }) => {
+      const response = await api.put(`/instances/${id}`, data)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['instances'] })
+      setShowWebhookModal(false)
+      setWebhookInstance(null)
+      setWebhookConfig({ webhookUrl: '', webhookEvents: [] })
+    },
+  })
+
   const syncTemplatesMutation = useMutation({
     mutationFn: async (id: string) => {
       const response = await api.post(`/instances/${id}/sync-templates`)
@@ -206,6 +225,15 @@ export function Instances() {
       webhookEvents: instance.webhookEvents || [],
     })
     setShowConfigModal(true)
+  }
+
+  const handleOpenWebhookConfig = (instance: Instance) => {
+    setWebhookInstance(instance)
+    setWebhookConfig({
+      webhookUrl: instance.webhookUrl || '',
+      webhookEvents: instance.webhookEvents || [],
+    })
+    setShowWebhookModal(true)
   }
 
   const getWebhookUrl = (instanceId: string) => {
@@ -354,6 +382,14 @@ export function Instances() {
                             </DropdownMenuItem>
                           )}
                         </>
+                      )}
+                      {instance.channel === 'BAILEYS' && (
+                        <DropdownMenuItem
+                          onClick={() => handleOpenWebhookConfig(instance)}
+                        >
+                          <Webhook className="mr-2 h-4 w-4" />
+                          Configurar Webhook
+                        </DropdownMenuItem>
                       )}
                       <DropdownMenuSeparator />
                       <DropdownMenuItem
@@ -748,6 +784,91 @@ export function Instances() {
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
               Salvar Configuração
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Webhook Config Modal for Baileys */}
+      <Dialog open={showWebhookModal} onOpenChange={setShowWebhookModal}>
+        <DialogContent className="max-w-md">
+          <DialogHeader>
+            <DialogTitle>Configurar Webhook - {webhookInstance?.name}</DialogTitle>
+            <DialogDescription>
+              Configure a URL para receber notificações de eventos
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="webhookUrlBaileys">URL do Webhook</Label>
+              <Input
+                id="webhookUrlBaileys"
+                placeholder="https://seu-servidor.com/webhook"
+                value={webhookConfig.webhookUrl}
+                onChange={(e) =>
+                  setWebhookConfig({ ...webhookConfig, webhookUrl: e.target.value })
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                URL para receber notificações de mensagens enviadas/recebidas
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Eventos</Label>
+              <div className="flex flex-wrap gap-4">
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={webhookConfig.webhookEvents?.includes('message.sent') || false}
+                    onChange={(e) => {
+                      const events = webhookConfig.webhookEvents || []
+                      if (e.target.checked) {
+                        setWebhookConfig({ ...webhookConfig, webhookEvents: [...events, 'message.sent'] })
+                      } else {
+                        setWebhookConfig({ ...webhookConfig, webhookEvents: events.filter(ev => ev !== 'message.sent') })
+                      }
+                    }}
+                  />
+                  message.sent
+                </label>
+                <label className="flex items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    checked={webhookConfig.webhookEvents?.includes('message.received') || false}
+                    onChange={(e) => {
+                      const events = webhookConfig.webhookEvents || []
+                      if (e.target.checked) {
+                        setWebhookConfig({ ...webhookConfig, webhookEvents: [...events, 'message.received'] })
+                      } else {
+                        setWebhookConfig({ ...webhookConfig, webhookEvents: events.filter(ev => ev !== 'message.received') })
+                      }
+                    }}
+                  />
+                  message.received
+                </label>
+              </div>
+            </div>
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowWebhookModal(false)}>
+              Cancelar
+            </Button>
+            <Button
+              variant="whatsapp"
+              onClick={() => {
+                if (webhookInstance) {
+                  updateWebhookMutation.mutate({ id: webhookInstance.id, data: webhookConfig })
+                }
+              }}
+              disabled={updateWebhookMutation.isPending}
+            >
+              {updateWebhookMutation.isPending && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Salvar
             </Button>
           </DialogFooter>
         </DialogContent>
