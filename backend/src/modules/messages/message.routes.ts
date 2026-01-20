@@ -1,9 +1,32 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
+import axios from 'axios'
 import { prisma } from '../../config/database.js'
 import { authMiddleware, apiTokenMiddleware } from '../../middlewares/auth.middleware.js'
 import { baileysManager } from '../../server.js'
 import { CloudAPIProvider } from '../../providers/cloud-api/cloud-api.provider.js'
+
+// Helper para disparar webhook após envio de mensagem
+async function triggerSendWebhook(instance: any, data: { to: string; content: string; type: string; messageId?: string }) {
+  if (!instance.webhookUrl || !instance.webhookEvents?.includes('message.sent')) {
+    return
+  }
+
+  try {
+    await axios.post(instance.webhookUrl, {
+      event: 'message.sent',
+      instanceId: instance.id,
+      instanceName: instance.name,
+      to: data.to,
+      content: data.content,
+      type: data.type,
+      messageId: data.messageId,
+      timestamp: new Date().toISOString(),
+    }, { timeout: 5000 })
+  } catch (error) {
+    console.error('Webhook send error:', error)
+  }
+}
 
 const sendTextSchema = z.object({
   instanceId: z.string().uuid().optional(),
@@ -171,9 +194,11 @@ export async function messageRoutes(fastify: FastifyInstance) {
       }
 
       try {
+        let messageId: string | undefined
+
         if (instance.channel === 'BAILEYS') {
           const result = await baileysManager.sendTextMessage(instance.id, data.to, data.text)
-          return reply.send({ success: true, messageId: result?.key.id })
+          messageId = result?.key.id || undefined
         } else {
           const fullInstance = await prisma.instance.findUnique({ where: { id: instance.id } })
 
@@ -189,8 +214,18 @@ export async function messageRoutes(fastify: FastifyInstance) {
 
           const cloudApi = new CloudAPIProvider(fullInstance)
           const result = await cloudApi.sendTextMessage(data.to, data.text)
-          return reply.send({ success: true, messageId: result.messages?.[0]?.id })
+          messageId = result.messages?.[0]?.id
+
+          // Disparar webhook para Cloud API
+          await triggerSendWebhook(fullInstance, {
+            to: data.to,
+            content: data.text,
+            type: 'text',
+            messageId,
+          })
         }
+
+        return reply.send({ success: true, messageId })
       } catch (error: any) {
         console.error('API send error:', error)
         return reply.status(500).send({ error: error.message || 'Error sending message' })
