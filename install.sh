@@ -57,7 +57,6 @@ echo -e "${YELLOW}=== Configuracao Inicial ===${NC}"
 echo ""
 
 read -p "Digite o dominio da API (ex: api.seudominio.com.br): " DOMAIN
-read -p "Digite seu email (para SSL): " EMAIL
 read -p "Digite a porta do backend [3333]: " PORT
 PORT=${PORT:-3333}
 read -p "Digite a porta do frontend [5454]: " FRONTEND_PORT
@@ -69,7 +68,6 @@ JWT_SECRET=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 64)
 
 echo ""
 log_info "Dominio: $DOMAIN"
-log_info "Email: $EMAIL"
 log_info "Porta Backend: $PORT"
 log_info "Porta Frontend: $FRONTEND_PORT"
 echo ""
@@ -92,7 +90,7 @@ log_success "Sistema atualizado"
 
 # Instalar dependencias basicas
 log_info "Instalando dependencias basicas..."
-apt-get install -y -qq curl wget git build-essential ca-certificates gnupg lsb-release
+apt-get install -y -qq curl wget git build-essential ca-certificates gnupg lsb-release ufw
 log_success "Dependencias basicas instaladas"
 
 # Instalar Docker
@@ -104,15 +102,6 @@ if ! command -v docker &> /dev/null; then
   log_success "Docker instalado"
 else
   log_success "Docker ja instalado"
-fi
-
-# Instalar Docker Compose
-if ! docker compose version &> /dev/null; then
-  log_info "Instalando Docker Compose..."
-  apt-get install -y -qq docker-compose-plugin
-  log_success "Docker Compose instalado"
-else
-  log_success "Docker Compose ja instalado"
 fi
 
 # Instalar Node.js 20
@@ -232,74 +221,27 @@ pm2 delete whatsapp-frontend 2>/dev/null || true
 log_info "Iniciando backend com PM2..."
 cd $APP_DIR/backend
 pm2 start dist/server.js --name whatsapp-backend
-log_success "Backend iniciado"
+log_success "Backend iniciado na porta ${PORT}"
 
 # Iniciar frontend com PM2
 log_info "Iniciando frontend com PM2..."
 cd $APP_DIR/frontend
 pm2 start "serve -s dist -l ${FRONTEND_PORT}" --name whatsapp-frontend
-log_success "Frontend iniciado"
+log_success "Frontend iniciado na porta ${FRONTEND_PORT}"
 
 # Salvar configuracao PM2
 pm2 save
 pm2 startup
 
-# Configurar Nginx como proxy reverso
-log_info "Configurando Nginx..."
-apt-get install -y -qq nginx certbot python3-certbot-nginx
-
-# Criar configuracao Nginx
-cat > /etc/nginx/sites-available/whatsapp-manager << EOF
-server {
-    listen 80;
-    server_name ${DOMAIN};
-
-    location /api {
-        rewrite ^/api(.*) \$1 break;
-        proxy_pass http://127.0.0.1:${PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_set_header X-Real-IP \$remote_addr;
-        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto \$scheme;
-        proxy_cache_bypass \$http_upgrade;
-        proxy_read_timeout 86400;
-    }
-
-    location /socket.io {
-        proxy_pass http://127.0.0.1:${PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-    }
-
-    location / {
-        proxy_pass http://127.0.0.1:${FRONTEND_PORT};
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection 'upgrade';
-        proxy_set_header Host \$host;
-        proxy_cache_bypass \$http_upgrade;
-    }
-}
-EOF
-
-# Ativar site
-ln -sf /etc/nginx/sites-available/whatsapp-manager /etc/nginx/sites-enabled/
-rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
-
-# Testar e reiniciar Nginx
-nginx -t
-systemctl restart nginx
-log_success "Nginx configurado"
-
-# Configurar SSL com Let's Encrypt
-log_info "Configurando SSL com Let's Encrypt..."
-certbot --nginx -d ${DOMAIN} --non-interactive --agree-tos -m ${EMAIL} || log_warning "SSL nao configurado. Configure manualmente depois."
+# Configurar Firewall
+log_info "Configurando Firewall..."
+ufw allow 22/tcp
+ufw allow ${PORT}/tcp
+ufw allow ${FRONTEND_PORT}/tcp
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+log_success "Firewall configurado"
 
 echo ""
 echo -e "${GREEN}"
@@ -310,10 +252,15 @@ echo "║                                                           ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
 echo ""
-echo -e "${YELLOW}=== Informacoes de Acesso ===${NC}"
+echo -e "${YELLOW}=== Portas da Aplicacao ===${NC}"
 echo ""
-echo -e "URL do Sistema:     ${GREEN}https://${DOMAIN}${NC}"
-echo -e "URL da API:         ${GREEN}https://${DOMAIN}/api${NC}"
+echo -e "Backend:            ${GREEN}http://IP_DO_SERVIDOR:${PORT}${NC}"
+echo -e "Frontend:           ${GREEN}http://IP_DO_SERVIDOR:${FRONTEND_PORT}${NC}"
+echo ""
+echo -e "${YELLOW}=== Configuracao no Nginx Proxy Manager ===${NC}"
+echo ""
+echo -e "Frontend: Aponte ${GREEN}${DOMAIN}${NC} para ${GREEN}http://IP_INTERNO:${FRONTEND_PORT}${NC}"
+echo -e "API:      Aponte ${GREEN}${DOMAIN}/api${NC} para ${GREEN}http://IP_INTERNO:${PORT}${NC}"
 echo ""
 echo -e "${YELLOW}=== Credenciais de Admin ===${NC}"
 echo ""
@@ -324,8 +271,7 @@ echo -e "${RED}IMPORTANTE: Troque a senha do admin apos o primeiro login!${NC}"
 echo ""
 echo -e "${YELLOW}=== Credenciais do Banco ===${NC}"
 echo ""
-echo -e "Host:               localhost"
-echo -e "Porta:              5432"
+echo -e "Host:               localhost:5432"
 echo -e "Usuario:            whatsapp"
 echo -e "Senha:              ${DB_PASSWORD}"
 echo -e "Database:           whatsapp_manager"
@@ -346,8 +292,9 @@ echo ""
 cat > $APP_DIR/credenciais.txt << EOF
 === WhatsApp Manager API - Credenciais ===
 
-URL: https://${DOMAIN}
-API: https://${DOMAIN}/api
+Dominio: ${DOMAIN}
+Backend: http://localhost:${PORT}
+Frontend: http://localhost:${FRONTEND_PORT}
 
 === Admin ===
 Email: admin@whatsapp.local
