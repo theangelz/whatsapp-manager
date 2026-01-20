@@ -34,9 +34,23 @@ echo ""
 
 # Verificar se esta rodando como root
 if [ "$EUID" -ne 0 ]; then
-  log_error "Por favor, execute como root (sudo)"
+  log_error "Por favor, execute como root (sudo ./install.sh)"
   exit 1
 fi
+
+# Diretorio atual (onde o script foi clonado)
+SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+
+# Verificar se backend e frontend existem
+if [ ! -d "$SCRIPT_DIR/backend" ] || [ ! -d "$SCRIPT_DIR/frontend" ]; then
+  log_error "Diretorio backend ou frontend nao encontrado!"
+  log_error "Certifique-se de executar o script da pasta do projeto clonado."
+  exit 1
+fi
+
+# Usar diretorio atual como APP_DIR
+APP_DIR="$SCRIPT_DIR"
+log_info "Diretorio do projeto: $APP_DIR"
 
 # Coletar informacoes
 echo -e "${YELLOW}=== Configuracao Inicial ===${NC}"
@@ -52,7 +66,6 @@ FRONTEND_PORT=${FRONTEND_PORT:-5454}
 # Gerar senhas aleatorias
 DB_PASSWORD=$(openssl rand -base64 24 | tr -dc 'a-zA-Z0-9' | head -c 32)
 JWT_SECRET=$(openssl rand -base64 48 | tr -dc 'a-zA-Z0-9' | head -c 64)
-ADMIN_PASSWORD=$(openssl rand -base64 12 | tr -dc 'a-zA-Z0-9' | head -c 16)
 
 echo ""
 log_info "Dominio: $DOMAIN"
@@ -94,7 +107,7 @@ else
 fi
 
 # Instalar Docker Compose
-if ! command -v docker-compose &> /dev/null && ! docker compose version &> /dev/null; then
+if ! docker compose version &> /dev/null; then
   log_info "Instalando Docker Compose..."
   apt-get install -y -qq docker-compose-plugin
   log_success "Docker Compose instalado"
@@ -119,23 +132,6 @@ if ! command -v pm2 &> /dev/null; then
   log_success "PM2 instalado"
 else
   log_success "PM2 ja instalado"
-fi
-
-# Criar diretorio da aplicacao
-APP_DIR="/opt/whatsapp-manager"
-log_info "Criando diretorio da aplicacao em $APP_DIR..."
-mkdir -p $APP_DIR
-cd $APP_DIR
-
-# Copiar arquivos (se estivermos no diretorio do projeto)
-SCRIPT_DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
-if [ -d "$SCRIPT_DIR/backend" ] && [ -d "$SCRIPT_DIR/frontend" ]; then
-  log_info "Copiando arquivos do projeto..."
-  cp -r "$SCRIPT_DIR/backend" $APP_DIR/
-  cp -r "$SCRIPT_DIR/frontend" $APP_DIR/
-  cp -r "$SCRIPT_DIR/docker-compose.yml" $APP_DIR/ 2>/dev/null || true
-  cp -r "$SCRIPT_DIR/docker-compose.prod.yml" $APP_DIR/ 2>/dev/null || true
-  log_success "Arquivos copiados"
 fi
 
 # Criar arquivo .env do backend
@@ -168,196 +164,142 @@ EOF
 
 log_success "Variaveis de ambiente configuradas"
 
-# Criar docker-compose.prod.yml
-log_info "Criando docker-compose de producao..."
-cat > $APP_DIR/docker-compose.prod.yml << EOF
-version: '3.8'
+# Criar diretorio de sessoes
+mkdir -p $APP_DIR/backend/sessions
 
-services:
-  postgres:
-    image: postgres:15-alpine
-    container_name: whatsapp_postgres
-    restart: always
-    environment:
-      POSTGRES_USER: whatsapp
-      POSTGRES_PASSWORD: ${DB_PASSWORD}
-      POSTGRES_DB: whatsapp_manager
-    volumes:
-      - postgres_data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U whatsapp -d whatsapp_manager"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-    networks:
-      - whatsapp-net
+# Iniciar PostgreSQL com Docker
+log_info "Iniciando PostgreSQL com Docker..."
+docker stop whatsapp_postgres 2>/dev/null || true
+docker rm whatsapp_postgres 2>/dev/null || true
 
-  redis:
-    image: redis:7-alpine
-    container_name: whatsapp_redis
-    restart: always
-    volumes:
-      - redis_data:/data
-    networks:
-      - whatsapp-net
+docker run -d \
+  --name whatsapp_postgres \
+  --restart always \
+  -e POSTGRES_USER=whatsapp \
+  -e POSTGRES_PASSWORD=${DB_PASSWORD} \
+  -e POSTGRES_DB=whatsapp_manager \
+  -p 5432:5432 \
+  -v whatsapp_postgres_data:/var/lib/postgresql/data \
+  postgres:15-alpine
 
-  traefik:
-    image: traefik:v3.1
-    container_name: whatsapp_traefik
-    restart: always
-    command:
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-      - "--entrypoints.web.http.redirections.entrypoint.to=websecure"
-      - "--entrypoints.web.http.redirections.entrypoint.scheme=https"
-      - "--certificatesresolvers.leresolver.acme.httpchallenge=true"
-      - "--certificatesresolvers.leresolver.acme.httpchallenge.entrypoint=web"
-      - "--certificatesresolvers.leresolver.acme.email=${EMAIL}"
-      - "--certificatesresolvers.leresolver.acme.storage=/acme.json"
-      - "--api.dashboard=false"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - "/var/run/docker.sock:/var/run/docker.sock:ro"
-      - "./acme.json:/acme.json"
-    networks:
-      - whatsapp-net
-
-  backend:
-    image: node:20-alpine
-    container_name: whatsapp_backend
-    restart: always
-    working_dir: /app
-    command: sh -c "npm install && npx prisma migrate deploy && npm run build && npm start"
-    environment:
-      - DATABASE_URL=postgresql://whatsapp:${DB_PASSWORD}@postgres:5432/whatsapp_manager?schema=public
-      - JWT_SECRET=${JWT_SECRET}
-      - PORT=${PORT}
-      - NODE_ENV=production
-      - BAILEYS_SESSIONS_PATH=/app/sessions
-    volumes:
-      - ./backend:/app
-      - backend_node_modules:/app/node_modules
-      - sessions_data:/app/sessions
-    depends_on:
-      postgres:
-        condition: service_healthy
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.backend.rule=Host(\`${DOMAIN}\`) && PathPrefix(\`/api\`)"
-      - "traefik.http.routers.backend.entrypoints=websecure"
-      - "traefik.http.routers.backend.tls.certresolver=leresolver"
-      - "traefik.http.services.backend.loadbalancer.server.port=${PORT}"
-      - "traefik.http.middlewares.backend-strip.stripprefix.prefixes=/api"
-      - "traefik.http.routers.backend.middlewares=backend-strip"
-    networks:
-      - whatsapp-net
-
-  frontend:
-    image: node:20-alpine
-    container_name: whatsapp_frontend
-    restart: always
-    working_dir: /app
-    command: sh -c "npm install && npm run build && npx serve -s dist -l ${FRONTEND_PORT}"
-    environment:
-      - VITE_API_URL=https://${DOMAIN}/api
-    volumes:
-      - ./frontend:/app
-      - frontend_node_modules:/app/node_modules
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.frontend.rule=Host(\`${DOMAIN}\`)"
-      - "traefik.http.routers.frontend.entrypoints=websecure"
-      - "traefik.http.routers.frontend.tls.certresolver=leresolver"
-      - "traefik.http.services.frontend.loadbalancer.server.port=${FRONTEND_PORT}"
-    networks:
-      - whatsapp-net
-
-volumes:
-  postgres_data:
-  redis_data:
-  sessions_data:
-  backend_node_modules:
-  frontend_node_modules:
-
-networks:
-  whatsapp-net:
-    driver: bridge
-EOF
-
-log_success "docker-compose.prod.yml criado"
-
-# Criar arquivo acme.json para certificados SSL
-touch $APP_DIR/acme.json
-chmod 600 $APP_DIR/acme.json
-
-# Instalar dependencias e buildar
-log_info "Instalando dependencias do backend..."
-cd $APP_DIR/backend
-npm install --quiet
-log_success "Dependencias do backend instaladas"
-
-log_info "Gerando Prisma Client..."
-npx prisma generate
-log_success "Prisma Client gerado"
-
-log_info "Instalando dependencias do frontend..."
-cd $APP_DIR/frontend
-npm install --quiet
-log_success "Dependencias do frontend instaladas"
-
-# Buildar projetos
-log_info "Buildando backend..."
-cd $APP_DIR/backend
-npm run build
-log_success "Backend buildado"
-
-log_info "Buildando frontend..."
-cd $APP_DIR/frontend
-npm run build
-log_success "Frontend buildado"
-
-# Iniciar com Docker Compose
-log_info "Iniciando servicos com Docker..."
-cd $APP_DIR
-docker compose -f docker-compose.prod.yml up -d postgres redis
+log_success "PostgreSQL iniciado"
 
 # Aguardar PostgreSQL
 log_info "Aguardando PostgreSQL iniciar..."
 sleep 10
 
-# Rodar migrations
-log_info "Executando migrations do banco de dados..."
+# Instalar dependencias do backend
+log_info "Instalando dependencias do backend..."
 cd $APP_DIR/backend
-DATABASE_URL="postgresql://whatsapp:${DB_PASSWORD}@localhost:5432/whatsapp_manager?schema=public" npx prisma migrate deploy
-log_success "Migrations executadas"
+npm install
+log_success "Dependencias do backend instaladas"
+
+# Gerar Prisma Client e rodar migrations
+log_info "Configurando banco de dados..."
+npx prisma generate
+npx prisma migrate deploy
+log_success "Banco de dados configurado"
 
 # Criar usuario admin
 log_info "Criando usuario administrador..."
-DATABASE_URL="postgresql://whatsapp:${DB_PASSWORD}@localhost:5432/whatsapp_manager?schema=public" npx prisma db seed || true
+npx prisma db seed || true
 log_success "Usuario admin criado"
 
-# Iniciar backend e frontend com PM2
-log_info "Iniciando aplicacao com PM2..."
-cd $APP_DIR/backend
-pm2 delete whatsapp-backend 2>/dev/null || true
-pm2 start dist/server.js --name whatsapp-backend
+# Buildar backend
+log_info "Buildando backend..."
+npm run build
+log_success "Backend buildado"
 
+# Instalar dependencias do frontend
+log_info "Instalando dependencias do frontend..."
 cd $APP_DIR/frontend
-pm2 delete whatsapp-frontend 2>/dev/null || true
-npm install -g serve
-pm2 start "serve -s dist -l ${FRONTEND_PORT}" --name whatsapp-frontend
+npm install
+log_success "Dependencias do frontend instaladas"
 
+# Buildar frontend
+log_info "Buildando frontend..."
+npm run build
+log_success "Frontend buildado"
+
+# Instalar serve para servir frontend
+npm install -g serve
+
+# Parar processos PM2 existentes
+pm2 delete whatsapp-backend 2>/dev/null || true
+pm2 delete whatsapp-frontend 2>/dev/null || true
+
+# Iniciar backend com PM2
+log_info "Iniciando backend com PM2..."
+cd $APP_DIR/backend
+pm2 start dist/server.js --name whatsapp-backend
+log_success "Backend iniciado"
+
+# Iniciar frontend com PM2
+log_info "Iniciando frontend com PM2..."
+cd $APP_DIR/frontend
+pm2 start "serve -s dist -l ${FRONTEND_PORT}" --name whatsapp-frontend
+log_success "Frontend iniciado"
+
+# Salvar configuracao PM2
 pm2 save
 pm2 startup
 
-# Iniciar Traefik
-log_info "Iniciando Traefik para SSL..."
-cd $APP_DIR
-docker compose -f docker-compose.prod.yml up -d traefik
+# Configurar Nginx como proxy reverso
+log_info "Configurando Nginx..."
+apt-get install -y -qq nginx certbot python3-certbot-nginx
+
+# Criar configuracao Nginx
+cat > /etc/nginx/sites-available/whatsapp-manager << EOF
+server {
+    listen 80;
+    server_name ${DOMAIN};
+
+    location /api {
+        rewrite ^/api(.*) \$1 break;
+        proxy_pass http://127.0.0.1:${PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_cache_bypass \$http_upgrade;
+        proxy_read_timeout 86400;
+    }
+
+    location /socket.io {
+        proxy_pass http://127.0.0.1:${PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:${FRONTEND_PORT};
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host \$host;
+        proxy_cache_bypass \$http_upgrade;
+    }
+}
+EOF
+
+# Ativar site
+ln -sf /etc/nginx/sites-available/whatsapp-manager /etc/nginx/sites-enabled/
+rm -f /etc/nginx/sites-enabled/default 2>/dev/null || true
+
+# Testar e reiniciar Nginx
+nginx -t
+systemctl restart nginx
+log_success "Nginx configurado"
+
+# Configurar SSL com Let's Encrypt
+log_info "Configurando SSL com Let's Encrypt..."
+certbot --nginx -d ${DOMAIN} --non-interactive --agree-tos -m ${EMAIL} || log_warning "SSL nao configurado. Configure manualmente depois."
 
 echo ""
 echo -e "${GREEN}"
@@ -397,23 +339,22 @@ echo -e "Status:             ${BLUE}pm2 status${NC}"
 echo ""
 echo -e "${YELLOW}=== Webhook para Meta Cloud API ===${NC}"
 echo ""
-echo -e "URL:                ${GREEN}https://${DOMAIN}/api/webhook/cloud-api/{instanceId}${NC}"
+echo -e "URL: ${GREEN}https://${DOMAIN}/api/webhook/cloud-api/{instanceId}${NC}"
 echo ""
 
-# Salvar informacoes em arquivo
+# Salvar credenciais
 cat > $APP_DIR/credenciais.txt << EOF
 === WhatsApp Manager API - Credenciais ===
 
-URL do Sistema: https://${DOMAIN}
-URL da API: https://${DOMAIN}/api
+URL: https://${DOMAIN}
+API: https://${DOMAIN}/api
 
 === Admin ===
 Email: admin@whatsapp.local
 Senha: admin123
 
 === Banco de Dados ===
-Host: localhost
-Porta: 5432
+Host: localhost:5432
 Usuario: whatsapp
 Senha: ${DB_PASSWORD}
 Database: whatsapp_manager
