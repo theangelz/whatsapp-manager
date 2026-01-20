@@ -477,7 +477,7 @@ function FlowEditorContent() {
                   <SelectValue placeholder="Todas as instancias" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Todas as instancias</SelectItem>
+                  <SelectItem value="_all">Todas as instancias</SelectItem>
                   {Array.isArray(instances) && instances.map((instance) => (
                     <SelectItem key={instance.id} value={instance.id}>
                       {instance.name}

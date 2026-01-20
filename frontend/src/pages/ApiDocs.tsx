@@ -986,7 +986,7 @@ echo $response;
                           </SelectItem>
                         ))
                       ) : (
-                        <SelectItem value="" disabled>Nenhum template aprovado</SelectItem>
+                        <SelectItem value="_none" disabled>Nenhum template aprovado</SelectItem>
                       )}
                     </SelectContent>
                   </Select>
