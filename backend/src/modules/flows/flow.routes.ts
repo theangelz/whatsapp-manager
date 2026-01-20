@@ -30,9 +30,9 @@ const flowEdgeSchema = z.object({
   id: z.string(),
   sourceNodeId: z.string(),
   targetNodeId: z.string(),
-  sourceHandle: z.string().optional(),
-  targetHandle: z.string().optional(),
-  label: z.string().optional(),
+  sourceHandle: z.string().nullable().optional(),
+  targetHandle: z.string().nullable().optional(),
+  label: z.string().nullable().optional(),
   condition: z.any().optional(),
 })
 
@@ -231,9 +231,9 @@ export async function flowRoutes(fastify: FastifyInstance) {
             flowId: id,
             sourceNodeId: edge.sourceNodeId,
             targetNodeId: edge.targetNodeId,
-            sourceHandle: edge.sourceHandle,
-            targetHandle: edge.targetHandle,
-            label: edge.label,
+            sourceHandle: edge.sourceHandle || undefined,
+            targetHandle: edge.targetHandle || undefined,
+            label: edge.label || undefined,
             condition: edge.condition,
           },
         })

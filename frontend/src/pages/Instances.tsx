@@ -68,6 +68,8 @@ export function Instances() {
     phoneNumberId: '',
     accessToken: '',
     webhookSecret: '',
+    webhookUrl: '',
+    webhookEvents: [] as string[],
   })
 
   const { data: instances, isLoading } = useQuery<Instance[]>({
@@ -139,7 +141,7 @@ export function Instances() {
       queryClient.invalidateQueries({ queryKey: ['instances'] })
       setShowConfigModal(false)
       setConfigInstance(null)
-      setCloudApiConfig({ wabaId: '', phoneNumberId: '', accessToken: '', webhookSecret: '' })
+      setCloudApiConfig({ wabaId: '', phoneNumberId: '', accessToken: '', webhookSecret: '', webhookUrl: '', webhookEvents: [] })
     },
   })
 
@@ -200,6 +202,8 @@ export function Instances() {
       phoneNumberId: instance.phoneNumberId || '',
       accessToken: instance.accessToken || '',
       webhookSecret: instance.webhookSecret || '',
+      webhookUrl: instance.webhookUrl || '',
+      webhookEvents: instance.webhookEvents || [],
     })
     setShowConfigModal(true)
   }
@@ -573,7 +577,7 @@ export function Instances() {
         setShowConfigModal(open)
         if (!open) {
           setConfigInstance(null)
-          setCloudApiConfig({ wabaId: '', phoneNumberId: '', accessToken: '', webhookSecret: '' })
+          setCloudApiConfig({ wabaId: '', phoneNumberId: '', accessToken: '', webhookSecret: '', webhookUrl: '', webhookEvents: [] })
         }
       }}>
         <DialogContent className="sm:max-w-lg">
@@ -675,6 +679,55 @@ export function Instances() {
               <p className="text-xs text-muted-foreground">
                 Configure esta URL no Meta Business Suite → WhatsApp → Configuração → Webhook
               </p>
+            </div>
+
+            <div className="space-y-2 pt-4 border-t">
+              <Label className="flex items-center gap-2">
+                <Webhook className="h-4 w-4" />
+                Webhook de Notificação (receber eventos)
+              </Label>
+              <Input
+                placeholder="https://seu-servidor.com/webhook"
+                value={cloudApiConfig.webhookUrl || ''}
+                onChange={(e) =>
+                  setCloudApiConfig({ ...cloudApiConfig, webhookUrl: e.target.value })
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                URL para receber notificações de mensagens enviadas/recebidas
+              </p>
+              <div className="flex flex-wrap gap-2 mt-2">
+                <label className="flex items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={cloudApiConfig.webhookEvents?.includes('message.sent') || false}
+                    onChange={(e) => {
+                      const events = cloudApiConfig.webhookEvents || []
+                      if (e.target.checked) {
+                        setCloudApiConfig({ ...cloudApiConfig, webhookEvents: [...events, 'message.sent'] })
+                      } else {
+                        setCloudApiConfig({ ...cloudApiConfig, webhookEvents: events.filter(ev => ev !== 'message.sent') })
+                      }
+                    }}
+                  />
+                  message.sent
+                </label>
+                <label className="flex items-center gap-1 text-xs">
+                  <input
+                    type="checkbox"
+                    checked={cloudApiConfig.webhookEvents?.includes('message.received') || false}
+                    onChange={(e) => {
+                      const events = cloudApiConfig.webhookEvents || []
+                      if (e.target.checked) {
+                        setCloudApiConfig({ ...cloudApiConfig, webhookEvents: [...events, 'message.received'] })
+                      } else {
+                        setCloudApiConfig({ ...cloudApiConfig, webhookEvents: events.filter(ev => ev !== 'message.received') })
+                      }
+                    }}
+                  />
+                  message.received
+                </label>
+              </div>
             </div>
           </div>
 

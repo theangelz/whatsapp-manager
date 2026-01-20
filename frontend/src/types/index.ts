@@ -29,6 +29,9 @@ export interface Instance {
   phoneNumberId?: string
   accessToken?: string
   webhookSecret?: string
+  // Webhook configuration
+  webhookUrl?: string
+  webhookEvents?: string[]
   createdAt: string
 }
 
