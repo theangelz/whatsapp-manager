@@ -33,9 +33,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import api from '@/services/api'
 import type { Template } from '@/types'
 
-const API_BASE_URL = import.meta.env.PROD
-  ? 'https://apievo.sjnetwork.com.br'
-  : window.location.origin
+const API_BASE_URL = import.meta.env.VITE_API_URL || window.location.origin
 
 export function Templates() {
   const queryClient = useQueryClient()

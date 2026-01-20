@@ -1,9 +1,10 @@
 import axios from 'axios'
 import { useAuthStore } from '@/stores/auth.store'
 
-// Em produção usa domínio separado, em dev usa proxy
-// Sempre usa /api - nginx faz proxy para backend local
-const API_BASE_URL = '/api'
+// Usa variável de ambiente ou fallback para localhost
+const API_BASE_URL = import.meta.env.VITE_API_URL
+  ? `${import.meta.env.VITE_API_URL}/api`
+  : '/api'
 
 const api = axios.create({
   baseURL: API_BASE_URL,
