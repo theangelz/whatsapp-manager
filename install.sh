@@ -148,7 +148,7 @@ EOF
 
 # Criar arquivo .env do frontend
 cat > $APP_DIR/frontend/.env << EOF
-VITE_API_URL=https://${DOMAIN}/api
+VITE_API_URL=https://${DOMAIN}
 EOF
 
 log_success "Variaveis de ambiente configuradas"

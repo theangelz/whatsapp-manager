@@ -41,9 +41,9 @@ import {
 import api from '@/services/api'
 import type { Instance, Template } from '@/types'
 
-// URL para exibir nos exemplos de codigo (externa)
-const API_EXTERNAL_URL = 'https://apievo.sjnetwork.com.br'
-// URL para testes internos (local, sem CORS)
+// URL para exibir nos exemplos de codigo
+const API_EXTERNAL_URL = import.meta.env.VITE_API_URL || window.location.origin
+// URL para testes internos
 const API_TEST_URL = ''
 
 interface Endpoint {

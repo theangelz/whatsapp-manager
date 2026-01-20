@@ -1,7 +1,7 @@
 import { io, Socket } from 'socket.io-client'
 
-// Usa mesmo domínio - backend serve tudo na porta 3333
-const SOCKET_URL = window.location.origin
+// Usa variável de ambiente ou fallback para window.location.origin
+const SOCKET_URL = import.meta.env.VITE_API_URL || window.location.origin
 
 let socket: Socket | null = null
 
