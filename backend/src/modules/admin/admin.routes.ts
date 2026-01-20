@@ -10,8 +10,11 @@ const ADMIN_EMAILS = ['admin@whatsapp', 'admin@whatsapp.local']
 // Middleware para verificar se é admin
 async function adminMiddleware(request: FastifyRequest, reply: FastifyReply) {
   // Get user from database to check email
+  // JWT uses 'sub' for user id
+  const userId = (request.user as any).sub || (request.user as any).id
+
   const user = await prisma.user.findUnique({
-    where: { id: request.user.id },
+    where: { id: userId },
     select: { email: true },
   })
 

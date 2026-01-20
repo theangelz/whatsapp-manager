@@ -1,43 +1,17 @@
-import { FastifyInstance } from 'fastify'
+import { FastifyInstance, FastifyRequest } from 'fastify'
 import { z } from 'zod'
 import { prisma } from '../../config/database.js'
 import { authMiddleware } from '../../middlewares/auth.middleware.js'
 import { Prisma } from '@prisma/client'
 
-const nodeDataSchema = z.object({
-  label: z.string().optional(),
-  content: z.string().optional(),
-  mediaUrl: z.string().optional(),
-  mediaType: z.string().optional(),
-  buttons: z.array(z.object({
-    id: z.string(),
-    text: z.string(),
-  })).optional(),
-  listSections: z.array(z.object({
-    title: z.string(),
-    rows: z.array(z.object({
-      id: z.string(),
-      title: z.string(),
-      description: z.string().optional(),
-    })),
-  })).optional(),
-  delay: z.number().optional(),
-  variable: z.string().optional(),
-  value: z.string().optional(),
-  condition: z.object({
-    variable: z.string(),
-    operator: z.enum(['equals', 'contains', 'startsWith', 'endsWith', 'regex', 'exists']),
-    value: z.string().optional(),
-  }).optional(),
-  httpConfig: z.object({
-    method: z.enum(['GET', 'POST', 'PUT', 'DELETE']),
-    url: z.string(),
-    headers: z.record(z.string()).optional(),
-    body: z.string().optional(),
-    responseVariable: z.string().optional(),
-  }).optional(),
-  targetFlowId: z.string().optional(),
-})
+// Helper para extrair companyId do JWT (pode estar em diferentes propriedades)
+function getCompanyId(request: FastifyRequest): string {
+  const user = request.user as any
+  return user.companyId || user.company_id
+}
+
+// Schema flexível para aceitar qualquer dado do node
+const nodeDataSchema = z.record(z.any())
 
 const flowNodeSchema = z.object({
   id: z.string(),
@@ -68,7 +42,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // List all flows
   fastify.get('/', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
 
     const flows = await prisma.flow.findMany({
       where: { companyId },
@@ -93,7 +67,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // Get single flow with nodes and edges
   fastify.get('/:id', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
     const { id } = request.params as { id: string }
 
     const flow = await prisma.flow.findFirst({
@@ -123,7 +97,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
   // Create new flow
   fastify.post('/', async (request, reply) => {
     try {
-      const { companyId } = request.user!
+      const companyId = getCompanyId(request)
 
       const schema = z.object({
         name: z.string().min(1),
@@ -173,7 +147,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // Update flow metadata
   fastify.put('/:id', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
     const { id } = request.params as { id: string }
 
     const schema = z.object({
@@ -210,7 +184,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // Save flow canvas (nodes and edges)
   fastify.put('/:id/canvas', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
     const { id } = request.params as { id: string }
 
     const schema = z.object({
@@ -277,7 +251,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // Delete flow
   fastify.delete('/:id', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
     const { id } = request.params as { id: string }
 
     const flow = await prisma.flow.findFirst({
@@ -295,7 +269,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // Duplicate flow
   fastify.post('/:id/duplicate', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
     const { id } = request.params as { id: string }
 
     const flow = await prisma.flow.findFirst({
@@ -371,7 +345,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // Get flow statistics
   fastify.get('/:id/stats', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
     const { id } = request.params as { id: string }
 
     const flow = await prisma.flow.findFirst({
@@ -398,7 +372,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // List active sessions for a flow
   fastify.get('/:id/sessions', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
     const { id } = request.params as { id: string }
 
     const flow = await prisma.flow.findFirst({
@@ -420,7 +394,7 @@ export async function flowRoutes(fastify: FastifyInstance) {
 
   // Manually end a session
   fastify.delete('/:flowId/sessions/:sessionId', async (request, reply) => {
-    const { companyId } = request.user!
+    const companyId = getCompanyId(request)
     const { flowId, sessionId } = request.params as { flowId: string; sessionId: string }
 
     const flow = await prisma.flow.findFirst({
