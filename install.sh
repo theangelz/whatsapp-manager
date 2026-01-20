@@ -153,8 +153,9 @@ EOF
 
 log_success "Variaveis de ambiente configuradas"
 
-# Criar diretorio de sessoes
+# Criar diretorios necessarios
 mkdir -p $APP_DIR/backend/sessions
+mkdir -p $APP_DIR/backend/uploads
 
 # Iniciar PostgreSQL com Docker
 log_info "Iniciando PostgreSQL com Docker..."
@@ -173,9 +174,28 @@ docker run -d \
 
 log_success "PostgreSQL iniciado"
 
-# Aguardar PostgreSQL
-log_info "Aguardando PostgreSQL iniciar..."
-sleep 10
+# Iniciar Redis com Docker
+log_info "Iniciando Redis com Docker..."
+docker stop whatsapp_redis 2>/dev/null || true
+docker rm whatsapp_redis 2>/dev/null || true
+
+docker run -d \
+  --name whatsapp_redis \
+  --restart always \
+  -p 6379:6379 \
+  redis:7-alpine
+
+log_success "Redis iniciado"
+
+# Aguardar PostgreSQL estar pronto
+log_info "Aguardando PostgreSQL estar pronto..."
+for i in {1..30}; do
+  if docker exec whatsapp_postgres pg_isready -U whatsapp > /dev/null 2>&1; then
+    log_success "PostgreSQL esta pronto"
+    break
+  fi
+  sleep 1
+done
 
 # Instalar dependencias do backend
 log_info "Instalando dependencias do backend..."
@@ -183,10 +203,10 @@ cd $APP_DIR/backend
 npm install
 log_success "Dependencias do backend instaladas"
 
-# Gerar Prisma Client e rodar migrations
+# Gerar Prisma Client e sincronizar banco de dados
 log_info "Configurando banco de dados..."
 npx prisma generate
-npx prisma migrate deploy
+npx prisma db push --accept-data-loss
 log_success "Banco de dados configurado"
 
 # Criar usuario admin
@@ -197,6 +217,7 @@ log_success "Usuario admin criado"
 # Buildar backend
 log_info "Buildando backend..."
 npm run build
+npx prisma generate
 log_success "Backend buildado"
 
 # Instalar dependencias do frontend
@@ -213,9 +234,12 @@ log_success "Frontend buildado"
 # Instalar serve para servir frontend
 npm install -g serve
 
-# Parar processos PM2 existentes
+# Parar processos PM2 existentes e liberar portas
 pm2 delete whatsapp-backend 2>/dev/null || true
 pm2 delete whatsapp-frontend 2>/dev/null || true
+fuser -k ${PORT}/tcp 2>/dev/null || true
+fuser -k ${FRONTEND_PORT}/tcp 2>/dev/null || true
+sleep 2
 
 # Iniciar backend com PM2
 log_info "Iniciando backend com PM2..."
