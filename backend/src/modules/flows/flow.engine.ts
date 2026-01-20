@@ -176,8 +176,26 @@ export class FlowEngine {
     // Find start node
     const startNode = flow.nodes.find(n => n.type === 'START')
 
-    const session = await prisma.flowSession.create({
-      data: {
+    // Use upsert to handle existing sessions for same flow/instance/remoteJid
+    const session = await prisma.flowSession.upsert({
+      where: {
+        flowId_instanceId_remoteJid: {
+          flowId: flow.id,
+          instanceId,
+          remoteJid,
+        },
+      },
+      update: {
+        currentNodeId: startNode?.id,
+        variables: {},
+        context: {},
+        isActive: true,
+        waitingInput: false,
+        completedAt: null,
+        startedAt: new Date(),
+        lastActivity: new Date(),
+      },
+      create: {
         flowId: flow.id,
         instanceId,
         remoteJid,
