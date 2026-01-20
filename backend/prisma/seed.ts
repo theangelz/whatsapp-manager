@@ -10,16 +10,16 @@ async function main() {
   const hashedPassword = await bcrypt.hash('admin123', 10)
 
   const company = await prisma.company.upsert({
-    where: { email: 'admin@whatsapp' },
+    where: { email: 'admin@whatsapp.local' },
     update: {},
     create: {
       name: 'Admin Company',
-      email: 'admin@whatsapp',
+      email: 'admin@whatsapp.local',
       plan: 'premium',
       users: {
         create: {
           name: 'Administrador',
-          email: 'admin@whatsapp',
+          email: 'admin@whatsapp.local',
           password: hashedPassword,
           role: 'ADMIN',
         },
@@ -31,7 +31,7 @@ async function main() {
   })
 
   console.log('Created company:', company.name)
-  console.log('Created admin user: admin@whatsapp')
+  console.log('Created admin user: admin@whatsapp.local')
   console.log('Default password: admin123')
   console.log('')
   console.log('Database seeded successfully!')
