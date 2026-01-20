@@ -21,7 +21,7 @@ const createInstanceSchema = z.object({
 const updateInstanceSchema = z.object({
   name: z.string().min(2).optional(),
   description: z.string().optional(),
-  webhookUrl: z.string().url().optional().nullable(),
+  webhookUrl: z.string().optional().nullable().transform(v => v === '' ? null : v),
   webhookEvents: z.array(z.string()).optional(),
   rejectCalls: z.boolean().optional(),
   alwaysOnline: z.boolean().optional(),
