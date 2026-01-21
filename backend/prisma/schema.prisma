@@ -61,6 +61,12 @@ model Company {
   plan         String   @default("free")
   isActive     Boolean  @default(true)
   webhookToken String?  @unique
+
+  // Automação de disparo
+  autoReplyEnabled    Boolean  @default(false)
+  autoReplyTemplateId String?
+  autoReplyInstanceId String?
+
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 

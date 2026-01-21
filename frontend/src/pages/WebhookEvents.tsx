@@ -19,7 +19,11 @@ import {
   Shield,
   ShieldOff,
   RotateCcw,
+  Zap,
+  Power,
+  PowerOff,
 } from 'lucide-react'
+import { Switch } from '@/components/ui/switch'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -166,6 +170,24 @@ export function WebhookEvents() {
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['webhook-info'] })
+    },
+  })
+
+  // Auto-reply config
+  const { data: autoReplyConfig } = useQuery({
+    queryKey: ['auto-reply-config'],
+    queryFn: async () => {
+      const response = await api.get('/webhook-entrada/auto-reply')
+      return response.data
+    },
+  })
+
+  const updateAutoReplyMutation = useMutation({
+    mutationFn: async (data: { enabled: boolean; templateId?: string | null; instanceId?: string | null }) => {
+      return api.put('/webhook-entrada/auto-reply', data)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['auto-reply-config'] })
     },
   })
 
@@ -357,6 +379,122 @@ export function WebhookEvents() {
           </CardContent>
         </Card>
       )}
+
+      {/* Auto-Reply Configuration */}
+      <Card>
+        <CardHeader>
+          <div className="flex items-center justify-between">
+            <div>
+              <CardTitle className="text-lg flex items-center gap-2">
+                <Zap className="h-5 w-5" />
+                Disparo Automático
+              </CardTitle>
+              <CardDescription>
+                Dispara mensagem automaticamente quando webhook é recebido
+              </CardDescription>
+            </div>
+            <Badge variant={autoReplyConfig?.enabled ? 'default' : 'secondary'} className={autoReplyConfig?.enabled ? 'bg-green-500' : ''}>
+              {autoReplyConfig?.enabled ? (
+                <><Power className="h-3 w-3 mr-1" /> Ativo</>
+              ) : (
+                <><PowerOff className="h-3 w-3 mr-1" /> Inativo</>
+              )}
+            </Badge>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="grid gap-4 md:grid-cols-2">
+            <div className="space-y-2">
+              <Label>Template</Label>
+              <Select
+                value={autoReplyConfig?.templateId || ''}
+                onValueChange={(value) => {
+                  updateAutoReplyMutation.mutate({
+                    enabled: autoReplyConfig?.enabled || false,
+                    templateId: value || null,
+                    instanceId: autoReplyConfig?.instanceId || null,
+                  })
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione um template" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(templates || []).map((t: MessageTemplate) => (
+                    <SelectItem key={t.id} value={t.id}>
+                      {t.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
+            <div className="space-y-2">
+              <Label>Instância</Label>
+              <Select
+                value={autoReplyConfig?.instanceId || ''}
+                onValueChange={(value) => {
+                  updateAutoReplyMutation.mutate({
+                    enabled: autoReplyConfig?.enabled || false,
+                    templateId: autoReplyConfig?.templateId || null,
+                    instanceId: value || null,
+                  })
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder="Selecione uma instância" />
+                </SelectTrigger>
+                <SelectContent>
+                  {(instances || []).filter((i: Instance) => i.status === 'CONNECTED').map((i: Instance) => (
+                    <SelectItem key={i.id} value={i.id}>
+                      {i.name} ({i.channel})
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="flex items-center justify-between pt-2 border-t">
+            <div className="space-y-0.5">
+              <Label>Ativar Disparo Automático</Label>
+              <p className="text-xs text-muted-foreground">
+                Quando ativo, toda requisição com telefone dispara automaticamente
+              </p>
+            </div>
+            <Switch
+              checked={autoReplyConfig?.enabled || false}
+              disabled={!autoReplyConfig?.templateId || !autoReplyConfig?.instanceId}
+              onCheckedChange={(checked) => {
+                updateAutoReplyMutation.mutate({
+                  enabled: checked,
+                  templateId: autoReplyConfig?.templateId || null,
+                  instanceId: autoReplyConfig?.instanceId || null,
+                })
+              }}
+            />
+          </div>
+
+          {autoReplyConfig?.enabled && (
+            <div className="p-3 bg-green-500/10 border border-green-500/20 rounded-lg">
+              <div className="flex items-center gap-2 text-green-500">
+                <Zap className="h-4 w-4" />
+                <span className="font-medium">Automação Ativa</span>
+              </div>
+              <p className="text-sm text-muted-foreground mt-1">
+                Template: <strong>{autoReplyConfig.templateName}</strong> |
+                Instância: <strong>{autoReplyConfig.instanceName}</strong>
+              </p>
+            </div>
+          )}
+
+          {!autoReplyConfig?.templateId && !autoReplyConfig?.instanceId && (
+            <p className="text-sm text-muted-foreground">
+              Selecione um template e uma instância para ativar o disparo automático.
+            </p>
+          )}
+        </CardContent>
+      </Card>
 
       {/* Stats */}
       {stats && (
