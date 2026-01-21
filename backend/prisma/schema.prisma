@@ -53,15 +53,16 @@ enum CampaignStatus {
 }
 
 model Company {
-  id        String   @id @default(uuid())
-  name      String
-  document  String?  @unique
-  email     String   @unique
-  phone     String?
-  plan      String   @default("free")
-  isActive  Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id           String   @id @default(uuid())
+  name         String
+  document     String?  @unique
+  email        String   @unique
+  phone        String?
+  plan         String   @default("free")
+  isActive     Boolean  @default(true)
+  webhookToken String?  @unique
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   users            User[]
   instances        Instance[]

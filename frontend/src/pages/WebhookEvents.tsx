@@ -15,6 +15,10 @@ import {
   Copy,
   Phone,
   Globe,
+  Key,
+  Shield,
+  ShieldOff,
+  RotateCcw,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -147,6 +151,24 @@ export function WebhookEvents() {
     },
   })
 
+  const generateTokenMutation = useMutation({
+    mutationFn: async () => {
+      return api.post('/webhook-entrada/generate-token')
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['webhook-info'] })
+    },
+  })
+
+  const removeTokenMutation = useMutation({
+    mutationFn: async () => {
+      return api.delete('/webhook-entrada/remove-token')
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['webhook-info'] })
+    },
+  })
+
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text)
   }
@@ -198,30 +220,140 @@ export function WebhookEvents() {
       {webhookInfo && (
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Globe className="h-5 w-5" />
-              URL do Webhook
-            </CardTitle>
-            <CardDescription>
-              Use esta URL para enviar dados para o sistema
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="flex items-center gap-2">
-              <code className="flex-1 p-2 bg-muted rounded text-sm break-all">
-                {webhookInfo.webhookUrl}
-              </code>
-              <Button
-                variant="outline"
-                size="icon"
-                onClick={() => copyToClipboard(webhookInfo.webhookUrl)}
-              >
-                <Copy className="h-4 w-4" />
-              </Button>
+            <div className="flex items-center justify-between">
+              <div>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Globe className="h-5 w-5" />
+                  URL do Webhook
+                </CardTitle>
+                <CardDescription>
+                  Use esta URL para enviar dados para o sistema
+                </CardDescription>
+              </div>
+              <Badge variant={webhookInfo.tokenConfigured ? 'default' : 'secondary'}>
+                {webhookInfo.tokenConfigured ? (
+                  <><Shield className="h-3 w-3 mr-1" /> Protegido</>
+                ) : (
+                  <><ShieldOff className="h-3 w-3 mr-1" /> Público</>
+                )}
+              </Badge>
             </div>
-            <p className="text-xs text-muted-foreground mt-2">
+          </CardHeader>
+          <CardContent className="space-y-4">
+            {/* URL Base */}
+            <div className="space-y-2">
+              <Label className="text-sm">URL Base</Label>
+              <div className="flex items-center gap-2">
+                <code className="flex-1 p-2 bg-muted rounded text-sm break-all">
+                  {webhookInfo.webhookUrl}
+                </code>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  onClick={() => copyToClipboard(webhookInfo.webhookUrl)}
+                  title="Copiar URL"
+                >
+                  <Copy className="h-4 w-4" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Token */}
+            {webhookInfo.tokenConfigured && webhookInfo.webhookToken && (
+              <>
+                <div className="space-y-2">
+                  <Label className="text-sm flex items-center gap-1">
+                    <Key className="h-3 w-3" /> Token de Autenticação
+                  </Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 p-2 bg-green-500/10 border border-green-500/20 rounded text-sm break-all font-mono">
+                      {webhookInfo.webhookToken}
+                    </code>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyToClipboard(webhookInfo.webhookToken)}
+                      title="Copiar Token"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label className="text-sm">URL Completa com Token</Label>
+                  <div className="flex items-center gap-2">
+                    <code className="flex-1 p-2 bg-muted rounded text-sm break-all">
+                      {webhookInfo.webhookUrlWithToken}
+                    </code>
+                    <Button
+                      variant="outline"
+                      size="icon"
+                      onClick={() => copyToClipboard(webhookInfo.webhookUrlWithToken)}
+                      title="Copiar URL com Token"
+                    >
+                      <Copy className="h-4 w-4" />
+                    </Button>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Ou use o header: <code className="bg-muted px-1 rounded">X-Webhook-Token: {webhookInfo.webhookToken}</code>
+                  </p>
+                </div>
+              </>
+            )}
+
+            <p className="text-xs text-muted-foreground">
               Método: POST | Content-Type: application/json
             </p>
+
+            {/* Token Actions */}
+            <div className="flex gap-2 pt-2 border-t">
+              {webhookInfo.tokenConfigured ? (
+                <>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => generateTokenMutation.mutate()}
+                    disabled={generateTokenMutation.isPending}
+                  >
+                    {generateTokenMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <RotateCcw className="h-4 w-4 mr-1" />
+                    )}
+                    Regenerar Token
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => removeTokenMutation.mutate()}
+                    disabled={removeTokenMutation.isPending}
+                    className="text-red-500 hover:text-red-600"
+                  >
+                    {removeTokenMutation.isPending ? (
+                      <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                    ) : (
+                      <ShieldOff className="h-4 w-4 mr-1" />
+                    )}
+                    Remover Proteção
+                  </Button>
+                </>
+              ) : (
+                <Button
+                  variant="whatsapp"
+                  size="sm"
+                  onClick={() => generateTokenMutation.mutate()}
+                  disabled={generateTokenMutation.isPending}
+                >
+                  {generateTokenMutation.isPending ? (
+                    <Loader2 className="h-4 w-4 mr-1 animate-spin" />
+                  ) : (
+                    <Shield className="h-4 w-4 mr-1" />
+                  )}
+                  Gerar Token de Segurança
+                </Button>
+              )}
+            </div>
           </CardContent>
         </Card>
       )}
