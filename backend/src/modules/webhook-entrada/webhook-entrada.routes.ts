@@ -68,7 +68,14 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Create webhook event
+      // Delete old events (keep only the last one) - but preserve variables
+      const oldEvents = await prisma.webhookEvent.findMany({
+        where: { companyId },
+        orderBy: { createdAt: 'desc' },
+        skip: 0, // We'll delete all old ones after creating new
+      })
+
+      // Create new webhook event
       const event = await prisma.webhookEvent.create({
         data: {
           companyId,
@@ -78,18 +85,60 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         },
       })
 
-      // Extract and store variables
+      // Extract variables from payload
       const variables = extractVariables(payload)
-      const variableRecords = Object.entries(variables).map(([key, data]) => ({
-        webhookEventId: event.id,
-        key,
-        value: data.value,
-        valueType: data.type,
-      }))
 
-      if (variableRecords.length > 0) {
-        await prisma.webhookVariable.createMany({
-          data: variableRecords,
+      // Get existing variable keys (to preserve them)
+      const existingVars = await prisma.webhookVariable.findMany({
+        where: {
+          webhookEvent: { companyId }
+        },
+        select: { key: true },
+        distinct: ['key'],
+      })
+      const existingKeys = new Set(existingVars.map(v => v.key))
+
+      // Add new variables (update existing or create new)
+      for (const [key, data] of Object.entries(variables)) {
+        // Always save to the new event
+        await prisma.webhookVariable.create({
+          data: {
+            webhookEventId: event.id,
+            key,
+            value: data.value,
+            valueType: data.type,
+          },
+        })
+      }
+
+      // Also preserve variables that were in old events but not in new payload
+      for (const oldEvent of oldEvents) {
+        const oldVars = await prisma.webhookVariable.findMany({
+          where: { webhookEventId: oldEvent.id },
+        })
+
+        for (const oldVar of oldVars) {
+          // If this key is not in the new payload, preserve it
+          if (!variables[oldVar.key]) {
+            await prisma.webhookVariable.create({
+              data: {
+                webhookEventId: event.id,
+                key: oldVar.key,
+                value: oldVar.value,
+                valueType: oldVar.valueType,
+              },
+            })
+          }
+        }
+      }
+
+      // Now delete old events (variables will cascade delete, but we already preserved them)
+      if (oldEvents.length > 0) {
+        await prisma.webhookEvent.deleteMany({
+          where: {
+            companyId,
+            id: { not: event.id },
+          },
         })
       }
 
