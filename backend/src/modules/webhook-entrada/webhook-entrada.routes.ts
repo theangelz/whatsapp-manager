@@ -158,11 +158,79 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         })
       }
 
+      // =============================================
+      // AUTO-REPLY: Disparo automático se configurado
+      // =============================================
+      let autoReplySent = false
+      let autoReplyError: string | null = null
+
+      if (company.autoReplyEnabled && company.autoReplyTemplateId && company.autoReplyInstanceId && phoneNumber) {
+        try {
+          // Buscar template
+          const template = await prisma.messageTemplate.findUnique({
+            where: { id: company.autoReplyTemplateId },
+          })
+
+          // Buscar instância
+          const instance = await prisma.instance.findUnique({
+            where: { id: company.autoReplyInstanceId },
+          })
+
+          if (template && instance && instance.status === 'CONNECTED') {
+            // Aplicar variáveis ao template
+            let messageContent = template.bodyText
+            for (const [key, data] of Object.entries(variables)) {
+              messageContent = messageContent.replace(new RegExp(`{{${key}}}`, 'g'), data.value)
+            }
+
+            // Adicionar na fila de envio
+            const queueItem = await prisma.sendQueue.create({
+              data: {
+                companyId,
+                instanceId: instance.id,
+                phoneNumber,
+                messageContent,
+                templateId: template.id,
+                variables: variables as any,
+                webhookEventId: event.id,
+                status: 'WAITING',
+                priority: 10, // Alta prioridade para auto-reply
+              },
+            })
+
+            // Atualizar evento como processado
+            await prisma.webhookEvent.update({
+              where: { id: event.id },
+              data: {
+                status: 'PROCESSED',
+                instanceId: instance.id,
+                templateId: template.id,
+                processedAt: new Date(),
+              },
+            })
+
+            autoReplySent = true
+          } else {
+            autoReplyError = !template ? 'Template não encontrado' :
+                            !instance ? 'Instância não encontrada' :
+                            'Instância não conectada'
+          }
+        } catch (err: any) {
+          autoReplyError = err.message
+          console.error('Auto-reply error:', err.message)
+        }
+      }
+
       return reply.status(201).send({
         success: true,
         eventId: event.id,
         phoneNumber,
         variablesExtracted: Object.keys(variables).length,
+        autoReply: {
+          enabled: company.autoReplyEnabled,
+          sent: autoReplySent,
+          error: autoReplyError,
+        },
       })
     }
   )
@@ -594,6 +662,107 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         return reply.send({
           success: true,
           message: 'Token removido. O webhook agora aceita requisições sem autenticação.'
+        })
+      }
+    )
+
+    // =============================================
+    // AUTO-REPLY CONFIGURATION
+    // =============================================
+
+    // Get auto-reply config
+    protectedRoutes.get(
+      '/auto-reply',
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const company = await prisma.company.findUnique({
+          where: { id: request.user.companyId },
+          select: {
+            autoReplyEnabled: true,
+            autoReplyTemplateId: true,
+            autoReplyInstanceId: true,
+          }
+        })
+
+        // Get template and instance names for display
+        let templateName = null
+        let instanceName = null
+
+        if (company?.autoReplyTemplateId) {
+          const template = await prisma.messageTemplate.findUnique({
+            where: { id: company.autoReplyTemplateId },
+            select: { name: true }
+          })
+          templateName = template?.name
+        }
+
+        if (company?.autoReplyInstanceId) {
+          const instance = await prisma.instance.findUnique({
+            where: { id: company.autoReplyInstanceId },
+            select: { name: true, status: true }
+          })
+          instanceName = instance?.name
+        }
+
+        return reply.send({
+          enabled: company?.autoReplyEnabled || false,
+          templateId: company?.autoReplyTemplateId || null,
+          templateName,
+          instanceId: company?.autoReplyInstanceId || null,
+          instanceName,
+        })
+      }
+    )
+
+    // Update auto-reply config
+    protectedRoutes.put(
+      '/auto-reply',
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        const body = request.body as {
+          enabled?: boolean
+          templateId?: string | null
+          instanceId?: string | null
+        }
+
+        // Validate template exists if provided
+        if (body.templateId) {
+          const template = await prisma.messageTemplate.findFirst({
+            where: { id: body.templateId, companyId: request.user.companyId }
+          })
+          if (!template) {
+            return reply.status(400).send({ error: 'Template não encontrado' })
+          }
+        }
+
+        // Validate instance exists if provided
+        if (body.instanceId) {
+          const instance = await prisma.instance.findFirst({
+            where: { id: body.instanceId, companyId: request.user.companyId }
+          })
+          if (!instance) {
+            return reply.status(400).send({ error: 'Instância não encontrada' })
+          }
+        }
+
+        const company = await prisma.company.update({
+          where: { id: request.user.companyId },
+          data: {
+            autoReplyEnabled: body.enabled ?? false,
+            autoReplyTemplateId: body.templateId || null,
+            autoReplyInstanceId: body.instanceId || null,
+          },
+          select: {
+            autoReplyEnabled: true,
+            autoReplyTemplateId: true,
+            autoReplyInstanceId: true,
+          }
+        })
+
+        return reply.send({
+          success: true,
+          ...company,
+          message: company.autoReplyEnabled
+            ? 'Disparo automático ativado!'
+            : 'Disparo automático desativado.',
         })
       }
     )
