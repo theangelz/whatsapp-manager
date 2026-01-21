@@ -26,7 +26,7 @@ echo -e "${GREEN}"
 echo "╔═══════════════════════════════════════════════════════════╗"
 echo "║                                                           ║"
 echo "║     WhatsApp Manager API - Instalador Automatico          ║"
-echo "║                      v1.0.0                               ║"
+echo "║                      v1.1.0                               ║"
 echo "║                                                           ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
@@ -135,6 +135,8 @@ JWT_SECRET="${JWT_SECRET}"
 # Server
 PORT=${PORT}
 NODE_ENV=production
+BACKEND_URL=https://${DOMAIN}
+FRONTEND_URL=https://${DOMAIN}
 
 # Baileys Sessions
 BAILEYS_SESSIONS_PATH="./sessions"
@@ -307,9 +309,12 @@ echo -e "Ver logs frontend:  ${BLUE}pm2 logs whatsapp-frontend${NC}"
 echo -e "Reiniciar:          ${BLUE}pm2 restart all${NC}"
 echo -e "Status:             ${BLUE}pm2 status${NC}"
 echo ""
-echo -e "${YELLOW}=== Webhook para Meta Cloud API ===${NC}"
+echo -e "${YELLOW}=== Webhooks ===${NC}"
 echo ""
-echo -e "URL: ${GREEN}https://${DOMAIN}/api/webhook/cloud-api/{instanceId}${NC}"
+echo -e "Meta Cloud API:     ${GREEN}https://${DOMAIN}/api/webhook/cloud-api/{instanceId}${NC}"
+echo -e "Webhook Entrada:    ${GREEN}https://${DOMAIN}/api/webhook-entrada/{companyId}${NC}"
+echo ""
+echo -e "${BLUE}O companyId pode ser obtido na pagina de Webhook Events apos login.${NC}"
 echo ""
 
 # Salvar credenciais
@@ -319,6 +324,7 @@ cat > $APP_DIR/credenciais.txt << EOF
 Dominio: ${DOMAIN}
 Backend: http://localhost:${PORT}
 Frontend: http://localhost:${FRONTEND_PORT}
+URL Publica: https://${DOMAIN}
 
 === Admin ===
 Email: admin@whatsapp.local
@@ -332,6 +338,10 @@ Database: whatsapp_manager
 
 === JWT ===
 Secret: ${JWT_SECRET}
+
+=== Webhooks ===
+Meta Cloud API: https://${DOMAIN}/api/webhook/cloud-api/{instanceId}
+Webhook Entrada: https://${DOMAIN}/api/webhook-entrada/{companyId}
 
 Gerado em: $(date)
 EOF
