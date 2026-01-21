@@ -91,13 +91,19 @@ function extractPhoneNumber(payload: any): string | null {
 
 export async function webhookEntradaRoutes(fastify: FastifyInstance) {
   // =============================================
-  // PUBLIC ENDPOINT - Receives webhook data
+  // PUBLIC ENDPOINT - Receives webhook data (with token auth)
   // =============================================
   fastify.post(
     '/:companyId',
-    async (request: FastifyRequest<{ Params: { companyId: string } }>, reply: FastifyReply) => {
+    async (request: FastifyRequest<{ Params: { companyId: string }; Querystring: { token?: string } }>, reply: FastifyReply) => {
       const { companyId } = request.params
       const payload = request.body
+
+      // Get token from header or query param
+      const token =
+        (request.headers['x-webhook-token'] as string) ||
+        (request.headers['authorization']?.replace('Bearer ', '')) ||
+        request.query.token
 
       // Verify company exists
       const company = await prisma.company.findUnique({
@@ -106,6 +112,19 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
 
       if (!company) {
         return reply.status(404).send({ error: 'Company not found' })
+      }
+
+      // Verify token if company has one configured
+      if (company.webhookToken) {
+        if (!token) {
+          return reply.status(401).send({
+            error: 'Token required',
+            message: 'Use header X-Webhook-Token or query param ?token=xxx'
+          })
+        }
+        if (token !== company.webhookToken) {
+          return reply.status(401).send({ error: 'Invalid token' })
+        }
       }
 
       // Extract phone number from payload
@@ -495,11 +514,29 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
     protectedRoutes.get(
       '/info',
       async (request: FastifyRequest, reply: FastifyReply) => {
+        const company = await prisma.company.findUnique({
+          where: { id: request.user.companyId },
+          select: { webhookToken: true }
+        })
+
+        const baseUrl = `${env.BACKEND_URL}/api/webhook-entrada/${request.user.companyId}`
+
         return reply.send({
-          webhookUrl: `${env.BACKEND_URL}/api/webhook-entrada/${request.user.companyId}`,
+          webhookUrl: baseUrl,
+          webhookUrlWithToken: company?.webhookToken
+            ? `${baseUrl}?token=${company.webhookToken}`
+            : null,
           companyId: request.user.companyId,
+          webhookToken: company?.webhookToken || null,
+          tokenConfigured: !!company?.webhookToken,
           method: 'POST',
           contentType: 'application/json',
+          authentication: {
+            description: 'Token pode ser enviado via header ou query param',
+            headerName: 'X-Webhook-Token',
+            headerExample: `X-Webhook-Token: ${company?.webhookToken || 'seu-token'}`,
+            queryExample: `?token=${company?.webhookToken || 'seu-token'}`,
+          },
           description: 'Envie qualquer JSON. Telefones serão detectados automaticamente.',
           commonPhoneFields: [
             'phone',
@@ -515,6 +552,48 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
             valor: '150.00',
             vencimento: '25/01/2026',
           },
+        })
+      }
+    )
+
+    // Generate or regenerate webhook token
+    protectedRoutes.post(
+      '/generate-token',
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        // Generate a secure random token
+        const crypto = await import('crypto')
+        const newToken = crypto.randomBytes(32).toString('hex')
+
+        const company = await prisma.company.update({
+          where: { id: request.user.companyId },
+          data: { webhookToken: newToken },
+          select: { id: true, webhookToken: true }
+        })
+
+        return reply.send({
+          success: true,
+          webhookToken: company.webhookToken,
+          message: 'Token gerado com sucesso. Use este token para autenticar chamadas ao webhook.',
+          usage: {
+            header: `X-Webhook-Token: ${company.webhookToken}`,
+            queryParam: `?token=${company.webhookToken}`,
+          }
+        })
+      }
+    )
+
+    // Remove webhook token (make endpoint public again)
+    protectedRoutes.delete(
+      '/remove-token',
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        await prisma.company.update({
+          where: { id: request.user.companyId },
+          data: { webhookToken: null }
+        })
+
+        return reply.send({
+          success: true,
+          message: 'Token removido. O webhook agora aceita requisições sem autenticação.'
         })
       }
     )
