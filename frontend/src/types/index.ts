@@ -236,8 +236,6 @@ export interface FlowWithDetails extends Flow {
 }
 
 // Webhook Events Types
-export type WebhookEventStatus = 'PENDING' | 'PROCESSED' | 'ERROR' | 'IGNORED'
-
 export interface WebhookVariable {
   id: string
   webhookEventId: string
@@ -250,110 +248,68 @@ export interface WebhookVariable {
 export interface WebhookEvent {
   id: string
   companyId: string
-  instanceId?: string
   rawPayload: any
-  phoneNumber?: string
-  eventType?: string
   ipAddress: string
   userAgent?: string
-  status: WebhookEventStatus
-  processedAt?: string
-  errorMessage?: string
-  messageLogId?: string
-  templateId?: string
   createdAt: string
-  updatedAt: string
-  instance?: {
-    id: string
-    name: string
-  }
   variables?: WebhookVariable[]
 }
 
-// Message Templates Types
-export type MessageTemplateType = 'COBRANCA' | 'LEMBRETE' | 'AVISO' | 'PROMOCAO' | 'CONFIRMACAO' | 'CUSTOM'
-export type TemplateChannelType = 'BOTH' | 'BAILEYS' | 'CLOUD_API'
+// Automation Types
+export type AutomationStatus = 'ACTIVE' | 'INACTIVE'
+export type AutomationLogStatus = 'QUEUED' | 'PROCESSING' | 'SENT' | 'FAILED'
 
-export interface MessageTemplate {
+export interface Automation {
   id: string
   companyId: string
+  instanceId: string
   name: string
   description?: string
-  type: MessageTemplateType
-  channelType: TemplateChannelType
-  isHomologated: boolean
+  token: string
+  status: AutomationStatus
+  delayBetweenMessages: number
   metaTemplateName?: string
-  metaTemplateId?: string
-  bodyText: string
-  headerText?: string
-  footerText?: string
-  variableSchema?: Record<string, any>
-  isActive: boolean
-  usageCount: number
-  lastUsedAt?: string
-  createdAt: string
-  updatedAt: string
-  extractedVariables?: string[]
-}
-
-// Send Queue Types
-export type SendQueueStatus = 'WAITING' | 'SCHEDULED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
-
-export interface SendQueueItem {
-  id: string
-  companyId: string
-  instanceId: string
-  phoneNumber: string
-  messageContent: string
-  messageType: string
-  templateId?: string
-  variables?: Record<string, string>
-  webhookEventId?: string
-  priority: number
-  scheduledFor?: string
-  status: SendQueueStatus
-  attempts: number
-  maxAttempts: number
-  lastAttemptAt?: string
-  nextAttemptAt?: string
-  messageLogId?: string
-  error?: string
+  metaTemplateLanguage?: string
+  messageBody?: {
+    text?: string
+    [key: string]: any
+  }
+  variableMapping?: Record<string, string>
+  phoneField: string
+  totalSent: number
+  totalFailed: number
+  lastTriggeredAt?: string
   createdAt: string
   updatedAt: string
   instance?: {
     id: string
     name: string
-    channel: string
+    channel: 'BAILEYS' | 'CLOUD_API'
     status: string
   }
+  _count?: {
+    logs: number
+  }
 }
 
-// Message Log Types
-export type MessageLogStatus = 'QUEUED' | 'PROCESSING' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'CANCELLED'
-
-export interface MessageLog {
+export interface AutomationLog {
   id: string
-  companyId: string
-  instanceId: string
+  automationId: string
   phoneNumber: string
-  messageContent: string
-  messageType: string
-  webhookEventId?: string
-  templateId?: string
-  appliedVariables?: Record<string, string>
-  status: MessageLogStatus
-  queuedAt: string
-  sentAt?: string
-  failedAt?: string
-  apiResponse?: any
+  messageContent?: string
+  payload?: any
+  status: AutomationLogStatus
   apiMessageId?: string
   errorMessage?: string
-  processingTimeMs?: number
+  processedAt?: string
   createdAt: string
-  updatedAt: string
-  instance?: {
-    id: string
-    name: string
-    channel: string
-  }
+}
+
+export interface MetaTemplate {
+  id: string
+  name: string
+  status: string
+  category: string
+  language: string
+  components: any[]
 }

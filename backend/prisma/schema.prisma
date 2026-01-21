@@ -60,12 +60,7 @@ model Company {
   phone        String?
   plan         String   @default("free")
   isActive     Boolean  @default(true)
-  webhookToken String?  @unique
-
-  // Automação de disparo
-  autoReplyEnabled    Boolean  @default(false)
-  autoReplyTemplateId String?
-  autoReplyInstanceId String?
+  webhookToken String?  @unique   // Token para webhook de entrada (extração de variáveis)
 
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -77,9 +72,7 @@ model Company {
   templates        Template[]
   flows            Flow[]
   webhookEvents    WebhookEvent[]
-  messageTemplates MessageTemplate[]
-  messageLogs      MessageLog[]
-  sendQueues       SendQueue[]
+  automations      Automation[]
 
   @@map("companies")
 }
@@ -144,10 +137,7 @@ model Instance {
   typebotIntegration     TypebotIntegration?
   n8nIntegration         N8nIntegration?
   campaignInstances      CampaignInstance[]
-  receivedWebhookEvents  WebhookEvent[]
-  instanceLock           InstanceLock?
-  messageLogs            MessageLog[]
-  sendQueues             SendQueue[]
+  automations            Automation[]
 
   @@map("instances")
 }
@@ -478,38 +468,20 @@ model FlowSession {
 }
 
 // ============================================
-// Menu 1: Webhook de Entrada + Templates + Disparo
+// Webhook de Entrada (simples - apenas recebe e extrai variáveis)
 // ============================================
 
-enum WebhookEventStatus {
-  PENDING
-  PROCESSED
-  ERROR
-  IGNORED
-}
-
 model WebhookEvent {
-  id            String              @id @default(uuid())
+  id            String      @id @default(uuid())
   companyId     String
-  instanceId    String?
   rawPayload    Json
-  phoneNumber   String?
-  eventType     String?
   ipAddress     String
   userAgent     String?
-  status        WebhookEventStatus  @default(PENDING)
-  processedAt   DateTime?
-  errorMessage  String?
-  messageLogId  String?
-  templateId    String?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
+  createdAt     DateTime    @default(now())
 
-  company       Company             @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  instance      Instance?           @relation(fields: [instanceId], references: [id], onDelete: SetNull)
+  company       Company     @relation(fields: [companyId], references: [id], onDelete: Cascade)
   variables     WebhookVariable[]
 
-  @@index([companyId, status])
   @@index([companyId, createdAt])
   @@map("webhook_events")
 }
@@ -528,146 +500,81 @@ model WebhookVariable {
   @@map("webhook_variables")
 }
 
-enum MessageTemplateType {
-  COBRANCA
-  LEMBRETE
-  AVISO
-  PROMOCAO
-  CONFIRMACAO
-  CUSTOM
+// ============================================
+// Automação de Disparo
+// ============================================
+
+enum AutomationStatus {
+  ACTIVE
+  INACTIVE
 }
 
-enum TemplateChannelType {
-  BOTH
-  BAILEYS
-  CLOUD_API
-}
-
-model MessageTemplate {
-  id                  String               @id @default(uuid())
+model Automation {
+  id                  String            @id @default(uuid())
   companyId           String
+  instanceId          String
   name                String
   description         String?
-  type                MessageTemplateType  @default(CUSTOM)
-  channelType         TemplateChannelType  @default(BOTH)
-  isHomologated       Boolean              @default(false)
-  metaTemplateName    String?
-  metaTemplateId      String?
-  bodyText            String
-  headerText          String?
-  footerText          String?
-  variableSchema      Json?
-  isActive            Boolean              @default(true)
-  usageCount          Int                  @default(0)
-  lastUsedAt          DateTime?
-  createdAt           DateTime             @default(now())
-  updatedAt           DateTime             @updatedAt
 
-  company             Company              @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  // Endpoint próprio
+  token               String            @unique @default(uuid())
 
-  @@unique([companyId, name])
-  @@map("message_templates")
+  // Configuração de disparo
+  status              AutomationStatus  @default(INACTIVE)
+  delayBetweenMessages Int              @default(3000)  // ms entre mensagens
+
+  // Para Cloud API - template homologado
+  metaTemplateName    String?           // Nome do template na Meta
+  metaTemplateLanguage String?          @default("pt_BR")
+
+  // Corpo da mensagem (JSON) - usado para Baileys ou preview
+  messageBody         Json?
+
+  // Mapeamento de variáveis: {"to": "telefone", "name": "nome"}
+  variableMapping     Json?
+
+  // Campo que contém o telefone de destino
+  phoneField          String            @default("telefone")
+
+  // Estatísticas
+  totalSent           Int               @default(0)
+  totalFailed         Int               @default(0)
+  lastTriggeredAt     DateTime?
+
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+
+  company             Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  instance            Instance          @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  logs                AutomationLog[]
+
+  @@index([companyId])
+  @@index([token])
+  @@map("automations")
 }
 
-enum InstanceLockStatus {
-  LIVRE
-  EM_USO
-  BLOQUEADA
-}
-
-model InstanceLock {
-  id            String              @id @default(uuid())
-  instanceId    String              @unique
-  status        InstanceLockStatus  @default(LIVRE)
-  lockedAt      DateTime?
-  lockedBy      String?
-  lockedReason  String?
-  lastSendAt    DateTime?
-  sendCount     Int                 @default(0)
-  errorCount    Int                 @default(0)
-  lastError     String?
-  createdAt     DateTime            @default(now())
-  updatedAt     DateTime            @updatedAt
-
-  instance      Instance            @relation(fields: [instanceId], references: [id], onDelete: Cascade)
-
-  @@map("instance_locks")
-}
-
-enum MessageLogStatus {
+enum AutomationLogStatus {
   QUEUED
   PROCESSING
   SENT
-  DELIVERED
-  READ
   FAILED
-  CANCELLED
 }
 
-model MessageLog {
-  id                String            @id @default(uuid())
-  companyId         String
-  instanceId        String
-  phoneNumber       String
-  messageContent    String
-  messageType       String            @default("text")
-  webhookEventId    String?
-  templateId        String?
-  appliedVariables  Json?
-  status            MessageLogStatus  @default(QUEUED)
-  queuedAt          DateTime          @default(now())
-  sentAt            DateTime?
-  failedAt          DateTime?
-  apiResponse       Json?
-  apiMessageId      String?
-  errorMessage      String?
-  processingTimeMs  Int?
-  createdAt         DateTime          @default(now())
-  updatedAt         DateTime          @updatedAt
-
-  company           Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  instance          Instance          @relation(fields: [instanceId], references: [id], onDelete: Cascade)
-
-  @@index([companyId, status])
-  @@index([instanceId, createdAt])
-  @@map("message_logs")
-}
-
-enum SendQueueStatus {
-  WAITING
-  SCHEDULED
-  PROCESSING
-  COMPLETED
-  FAILED
-  CANCELLED
-}
-
-model SendQueue {
-  id              String            @id @default(uuid())
-  companyId       String
-  instanceId      String
+model AutomationLog {
+  id              String              @id @default(uuid())
+  automationId    String
   phoneNumber     String
-  messageContent  String
-  messageType     String            @default("text")
-  templateId      String?
-  variables       Json?
-  webhookEventId  String?
-  priority        Int               @default(5)
-  scheduledFor    DateTime?
-  status          SendQueueStatus   @default(WAITING)
-  attempts        Int               @default(0)
-  maxAttempts     Int               @default(3)
-  lastAttemptAt   DateTime?
-  nextAttemptAt   DateTime?
-  messageLogId    String?
-  error           String?
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  messageContent  String?
+  payload         Json?               // Payload recebido
+  status          AutomationLogStatus @default(QUEUED)
+  apiMessageId    String?
+  errorMessage    String?
+  processedAt     DateTime?
+  createdAt       DateTime            @default(now())
 
-  company         Company           @relation(fields: [companyId], references: [id], onDelete: Cascade)
-  instance        Instance          @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+  automation      Automation          @relation(fields: [automationId], references: [id], onDelete: Cascade)
 
-  @@index([status, scheduledFor, priority])
-  @@index([instanceId, status])
-  @@map("send_queue")
+  @@index([automationId, createdAt])
+  @@map("automation_logs")
 }
+
