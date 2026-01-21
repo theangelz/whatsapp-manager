@@ -16,6 +16,10 @@ import {
   Workflow,
   X,
   Crown,
+  Globe,
+  FileCode,
+  ListOrdered,
+  Activity,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth.store'
 import { Button } from '@/components/ui/button'
@@ -28,7 +32,11 @@ const menuItems = [
   { path: '/messages', label: 'Mensagens', icon: MessageSquare },
   { path: '/contacts', label: 'Contatos', icon: Users },
   { path: '/campaigns', label: 'Campanhas', icon: Send },
-  { path: '/templates', label: 'Templates', icon: FileText },
+  { path: '/templates', label: 'Templates Meta', icon: FileText },
+  { path: '/webhook-events', label: 'Webhook Entrada', icon: Globe },
+  { path: '/message-templates', label: 'Templates Msg', icon: FileCode },
+  { path: '/send-queue', label: 'Fila de Envio', icon: ListOrdered },
+  { path: '/message-logs', label: 'Logs de Envio', icon: Activity },
   { path: '/typebot', label: 'Typebot', icon: Bot },
   { path: '/webhooks', label: 'Webhooks', icon: Webhook },
   { path: '/api-docs', label: 'API Docs', icon: Code },

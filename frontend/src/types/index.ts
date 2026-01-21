@@ -234,3 +234,126 @@ export interface FlowWithDetails extends Flow {
   nodes: FlowNode[]
   edges: FlowEdge[]
 }
+
+// Webhook Events Types
+export type WebhookEventStatus = 'PENDING' | 'PROCESSED' | 'ERROR' | 'IGNORED'
+
+export interface WebhookVariable {
+  id: string
+  webhookEventId: string
+  key: string
+  value: string
+  valueType: string
+  createdAt: string
+}
+
+export interface WebhookEvent {
+  id: string
+  companyId: string
+  instanceId?: string
+  rawPayload: any
+  phoneNumber?: string
+  eventType?: string
+  ipAddress: string
+  userAgent?: string
+  status: WebhookEventStatus
+  processedAt?: string
+  errorMessage?: string
+  messageLogId?: string
+  templateId?: string
+  createdAt: string
+  updatedAt: string
+  instance?: {
+    id: string
+    name: string
+  }
+  variables?: WebhookVariable[]
+}
+
+// Message Templates Types
+export type MessageTemplateType = 'COBRANCA' | 'LEMBRETE' | 'AVISO' | 'PROMOCAO' | 'CONFIRMACAO' | 'CUSTOM'
+export type TemplateChannelType = 'BOTH' | 'BAILEYS' | 'CLOUD_API'
+
+export interface MessageTemplate {
+  id: string
+  companyId: string
+  name: string
+  description?: string
+  type: MessageTemplateType
+  channelType: TemplateChannelType
+  isHomologated: boolean
+  metaTemplateName?: string
+  metaTemplateId?: string
+  bodyText: string
+  headerText?: string
+  footerText?: string
+  variableSchema?: Record<string, any>
+  isActive: boolean
+  usageCount: number
+  lastUsedAt?: string
+  createdAt: string
+  updatedAt: string
+  extractedVariables?: string[]
+}
+
+// Send Queue Types
+export type SendQueueStatus = 'WAITING' | 'SCHEDULED' | 'PROCESSING' | 'COMPLETED' | 'FAILED' | 'CANCELLED'
+
+export interface SendQueueItem {
+  id: string
+  companyId: string
+  instanceId: string
+  phoneNumber: string
+  messageContent: string
+  messageType: string
+  templateId?: string
+  variables?: Record<string, string>
+  webhookEventId?: string
+  priority: number
+  scheduledFor?: string
+  status: SendQueueStatus
+  attempts: number
+  maxAttempts: number
+  lastAttemptAt?: string
+  nextAttemptAt?: string
+  messageLogId?: string
+  error?: string
+  createdAt: string
+  updatedAt: string
+  instance?: {
+    id: string
+    name: string
+    channel: string
+    status: string
+  }
+}
+
+// Message Log Types
+export type MessageLogStatus = 'QUEUED' | 'PROCESSING' | 'SENT' | 'DELIVERED' | 'READ' | 'FAILED' | 'CANCELLED'
+
+export interface MessageLog {
+  id: string
+  companyId: string
+  instanceId: string
+  phoneNumber: string
+  messageContent: string
+  messageType: string
+  webhookEventId?: string
+  templateId?: string
+  appliedVariables?: Record<string, string>
+  status: MessageLogStatus
+  queuedAt: string
+  sentAt?: string
+  failedAt?: string
+  apiResponse?: any
+  apiMessageId?: string
+  errorMessage?: string
+  processingTimeMs?: number
+  createdAt: string
+  updatedAt: string
+  instance?: {
+    id: string
+    name: string
+    channel: string
+  }
+}

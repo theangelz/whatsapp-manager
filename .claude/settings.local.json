@@ -30,7 +30,22 @@
       "Bash(git rm:*)",
       "Bash(git rm -r --cached .claude/)",
       "Bash(git commit:*)",
-      "Bash(git config:*)"
+      "Bash(git config:*)",
+      "Bash(systemctl status:*)",
+      "Bash(service docker status:*)",
+      "Bash(service nginx:*)",
+      "Bash(ufw status:*)",
+      "Bash(docker-compose:*)",
+      "Bash(dig:*)",
+      "Bash(nslookup:*)",
+      "Bash(docker compose:*)",
+      "Bash(pm2 list:*)",
+      "Bash(pm2 logs:*)",
+      "Bash(kill:*)",
+      "Bash(npx tsx:*)",
+      "Bash(git reset:*)",
+      "Bash(tree:*)",
+      "Bash(npx prisma migrate dev:*)"
     ]
   }
 }
