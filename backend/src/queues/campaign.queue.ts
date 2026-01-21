@@ -4,7 +4,7 @@ import { env } from '../config/env.js'
 import { baileysManager } from '../server.js'
 import { CloudAPIProvider } from '../providers/cloud-api/cloud-api.provider.js'
 
-export const campaignQueue = new Queue('campaign', {
+export const campaignQueue = new Queue('campaign-queue', {
   redis: {
     host: env.REDIS_HOST,
     port: env.REDIS_PORT,
@@ -18,119 +18,96 @@ campaignQueue.process('process-campaign', async (job) => {
     where: { id: campaignId },
     include: {
       campaignInstances: {
-        include: { instance: true },
+        include: {
+          instance: true,
+        },
       },
       campaignContacts: {
         where: { status: 'PENDING' },
-        include: { contact: true },
-        take: 100,
+        include: {
+          contact: true,
+        },
+        take: 50,
       },
     },
   })
 
   if (!campaign || campaign.status !== 'RUNNING') {
-    return { message: 'Campaign not running' }
+    return { message: 'Campaign not running or not found' }
   }
 
-  const connectedInstances = campaign.campaignInstances
+  const availableInstances = campaign.campaignInstances
     .filter((ci) => ci.instance.status === 'CONNECTED')
     .map((ci) => ci.instance)
 
-  if (connectedInstances.length === 0) {
-    await prisma.campaign.update({
-      where: { id: campaignId },
-      data: { status: 'PAUSED' },
-    })
-    return { message: 'No connected instances' }
+  if (availableInstances.length === 0) {
+    return { message: 'No connected instances available' }
   }
 
+  let sentCount = 0
+  let failedCount = 0
   let instanceIndex = 0
 
   for (const campaignContact of campaign.campaignContacts) {
-    // Check if campaign is still running
-    const currentCampaign = await prisma.campaign.findUnique({
-      where: { id: campaignId },
-    })
-
-    if (currentCampaign?.status !== 'RUNNING') {
-      break
-    }
-
-    const instance = connectedInstances[instanceIndex % connectedInstances.length]
+    const instance = availableInstances[instanceIndex % availableInstances.length]
     instanceIndex++
 
     try {
+      const phoneNumber = campaignContact.contact.phoneNumber.replace(/\D/g, '')
+
       if (instance.channel === 'BAILEYS') {
-        if (campaign.messageType === 'text') {
-          await baileysManager.sendTextMessage(
-            instance.id,
-            campaignContact.contact.phoneNumber,
-            campaign.messageContent
-          )
-        } else if (campaign.mediaUrl) {
-          await baileysManager.sendMediaMessage(
-            instance.id,
-            campaignContact.contact.phoneNumber,
-            campaign.messageType as 'image' | 'video' | 'audio' | 'document',
-            campaign.mediaUrl,
-            campaign.messageContent
-          )
-        }
+        const jid = `${phoneNumber}@s.whatsapp.net`
+        await baileysManager.sendTextMessage(instance.id, jid, campaign.messageContent)
       } else if (instance.channel === 'CLOUD_API') {
         const cloudApi = new CloudAPIProvider(instance)
-
-        if (campaign.messageType === 'text') {
-          await cloudApi.sendTextMessage(
-            campaignContact.contact.phoneNumber,
-            campaign.messageContent
-          )
-        } else if (campaign.messageType === 'template' && campaign.templateId) {
-          const template = await prisma.template.findUnique({
-            where: { id: campaign.templateId },
-          })
-          if (template) {
-            await cloudApi.sendTemplateMessage(
-              campaignContact.contact.phoneNumber,
-              template.name,
-              template.language
-            )
-          }
-        }
+        await cloudApi.sendTextMessage(phoneNumber, campaign.messageContent)
       }
 
       await prisma.campaignContact.update({
         where: { id: campaignContact.id },
-        data: { status: 'SENT', sentAt: new Date() },
+        data: {
+          status: 'SENT',
+          sentAt: new Date(),
+        },
       })
 
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { sentCount: { increment: 1 } },
-      })
+      sentCount++
+
+      // Delay between messages
+      await new Promise((resolve) => setTimeout(resolve, campaign.delay))
     } catch (error: any) {
       await prisma.campaignContact.update({
         where: { id: campaignContact.id },
-        data: { status: 'FAILED', error: error.message },
+        data: {
+          status: 'FAILED',
+          error: error.message,
+        },
       })
-
-      await prisma.campaign.update({
-        where: { id: campaignId },
-        data: { failedCount: { increment: 1 } },
-      })
+      failedCount++
     }
-
-    // Delay between messages (anti-ban)
-    await new Promise((resolve) => setTimeout(resolve, campaign.delay))
   }
 
-  // Check if there are more pending contacts
-  const pendingCount = await prisma.campaignContact.count({
+  // Update campaign stats
+  await prisma.campaign.update({
+    where: { id: campaignId },
+    data: {
+      sentCount: { increment: sentCount },
+      failedCount: { increment: failedCount },
+    },
+  })
+
+  // Check if there are more contacts to process
+  const pendingContacts = await prisma.campaignContact.count({
     where: { campaignId, status: 'PENDING' },
   })
 
-  if (pendingCount > 0) {
-    // Add back to queue for next batch
-    await campaignQueue.add('process-campaign', { campaignId }, { delay: 1000 })
+  if (pendingContacts > 0) {
+    // Add job to process more contacts
+    await campaignQueue.add(
+      'process-campaign',
+      { campaignId },
+      { delay: 5000 }
+    )
   } else {
     // Campaign completed
     await prisma.campaign.update({
@@ -142,9 +119,9 @@ campaignQueue.process('process-campaign', async (job) => {
     })
   }
 
-  return { message: 'Batch processed' }
+  return { sent: sentCount, failed: failedCount }
 })
 
 campaignQueue.on('failed', (job, err) => {
-  console.error(`Campaign job ${job.id} failed:`, err)
+  console.error(`Campaign queue job ${job.id} failed:`, err)
 })

@@ -25,11 +25,8 @@ import { n8nRoutes } from './modules/n8n/n8n.routes.js'
 import { flowRoutes } from './modules/flows/flow.routes.js'
 import { adminRoutes } from './modules/admin/admin.routes.js'
 import { webhookEntradaRoutes } from './modules/webhook-entrada/webhook-entrada.routes.js'
-import { messageTemplateRoutes } from './modules/message-templates/message-template.routes.js'
-import { sendQueueRoutes } from './modules/send-queue/send-queue.routes.js'
-import { messageLogRoutes } from './modules/message-logs/message-log.routes.js'
+import { automationRoutes } from './modules/automations/automation.routes.js'
 import { BaileysManager } from './providers/baileys/baileys.manager.js'
-import { startSendQueueProcessor } from './queues/send-queue.worker.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -119,9 +116,7 @@ async function bootstrap() {
   await fastify.register(flowRoutes, { prefix: '/api/flows' })
   await fastify.register(adminRoutes, { prefix: '/api/admin' })
   await fastify.register(webhookEntradaRoutes, { prefix: '/api/webhook-entrada' })
-  await fastify.register(messageTemplateRoutes, { prefix: '/api/message-templates' })
-  await fastify.register(sendQueueRoutes, { prefix: '/api/send-queue' })
-  await fastify.register(messageLogRoutes, { prefix: '/api/message-logs' })
+  await fastify.register(automationRoutes, { prefix: '/api/automations' })
 
   // Start Fastify server
   await fastify.listen({ port: env.PORT, host: '0.0.0.0' })
@@ -178,9 +173,6 @@ async function bootstrap() {
       console.error(`Failed to restore instance ${instance.id}:`, error)
     }
   }
-
-  // Start send queue processor
-  startSendQueueProcessor()
 
   console.log(`Server running on http://0.0.0.0:${env.PORT}`)
 }

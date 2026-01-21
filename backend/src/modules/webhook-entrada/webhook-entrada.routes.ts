@@ -3,31 +3,6 @@ import { z } from 'zod'
 import { prisma } from '../../config/database.js'
 import { env } from '../../config/env.js'
 import { authMiddleware } from '../../middlewares/auth.middleware.js'
-import { channelValidationService } from '../../services/channel-validation.service.js'
-import { instanceLockService } from '../../services/instance-lock.service.js'
-import { rateLimiterService } from '../../services/rate-limiter.service.js'
-import { baileysManager } from '../../server.js'
-
-// Schema for webhook payload (flexible - accepts any JSON)
-const webhookPayloadSchema = z.record(z.any())
-
-const updateStatusSchema = z.object({
-  status: z.enum(['PENDING', 'PROCESSED', 'ERROR', 'IGNORED']),
-  errorMessage: z.string().optional(),
-})
-
-const applyTemplateSchema = z.object({
-  templateId: z.string().uuid(),
-  instanceId: z.string().uuid(),
-  phoneNumberField: z.string().optional(),
-  variableMapping: z.record(z.string()).optional(),
-})
-
-const directSendSchema = z.object({
-  instanceId: z.string().uuid(),
-  phoneNumber: z.string(),
-  message: z.string(),
-})
 
 /**
  * Extract variables from a JSON payload recursively
@@ -55,43 +30,9 @@ function extractVariables(obj: any, prefix = ''): Record<string, { value: string
   return result
 }
 
-/**
- * Extract phone number from payload (tries common patterns)
- */
-function extractPhoneNumber(payload: any): string | null {
-  const phoneFields = [
-    'phone',
-    'phoneNumber',
-    'phone_number',
-    'telefone',
-    'celular',
-    'whatsapp',
-    'mobile',
-    'contact.phone',
-    'customer.phone',
-    'data.phone',
-  ]
-
-  for (const field of phoneFields) {
-    const parts = field.split('.')
-    let value = payload
-    for (const part of parts) {
-      value = value?.[part]
-    }
-    if (value && typeof value === 'string') {
-      const cleaned = value.replace(/\D/g, '')
-      if (cleaned.length >= 10) {
-        return cleaned
-      }
-    }
-  }
-
-  return null
-}
-
 export async function webhookEntradaRoutes(fastify: FastifyInstance) {
   // =============================================
-  // PUBLIC ENDPOINT - Receives webhook data (with token auth)
+  // PUBLIC ENDPOINT - Receives webhook data (with optional token auth)
   // =============================================
   fastify.post(
     '/:companyId',
@@ -127,19 +68,13 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         }
       }
 
-      // Extract phone number from payload
-      const phoneNumber = extractPhoneNumber(payload)
-
       // Create webhook event
       const event = await prisma.webhookEvent.create({
         data: {
           companyId,
           rawPayload: payload as any,
-          phoneNumber,
-          eventType: (payload as any).event || (payload as any).type || 'unknown',
           ipAddress: request.ip || 'unknown',
           userAgent: request.headers['user-agent'] || null,
-          status: 'PENDING',
         },
       })
 
@@ -158,79 +93,11 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         })
       }
 
-      // =============================================
-      // AUTO-REPLY: Disparo automático se configurado
-      // =============================================
-      let autoReplySent = false
-      let autoReplyError: string | null = null
-
-      if (company.autoReplyEnabled && company.autoReplyTemplateId && company.autoReplyInstanceId && phoneNumber) {
-        try {
-          // Buscar template
-          const template = await prisma.messageTemplate.findUnique({
-            where: { id: company.autoReplyTemplateId },
-          })
-
-          // Buscar instância
-          const instance = await prisma.instance.findUnique({
-            where: { id: company.autoReplyInstanceId },
-          })
-
-          if (template && instance && instance.status === 'CONNECTED') {
-            // Aplicar variáveis ao template
-            let messageContent = template.bodyText
-            for (const [key, data] of Object.entries(variables)) {
-              messageContent = messageContent.replace(new RegExp(`{{${key}}}`, 'g'), data.value)
-            }
-
-            // Adicionar na fila de envio
-            const queueItem = await prisma.sendQueue.create({
-              data: {
-                companyId,
-                instanceId: instance.id,
-                phoneNumber,
-                messageContent,
-                templateId: template.id,
-                variables: variables as any,
-                webhookEventId: event.id,
-                status: 'WAITING',
-                priority: 10, // Alta prioridade para auto-reply
-              },
-            })
-
-            // Atualizar evento como processado
-            await prisma.webhookEvent.update({
-              where: { id: event.id },
-              data: {
-                status: 'PROCESSED',
-                instanceId: instance.id,
-                templateId: template.id,
-                processedAt: new Date(),
-              },
-            })
-
-            autoReplySent = true
-          } else {
-            autoReplyError = !template ? 'Template não encontrado' :
-                            !instance ? 'Instância não encontrada' :
-                            'Instância não conectada'
-          }
-        } catch (err: any) {
-          autoReplyError = err.message
-          console.error('Auto-reply error:', err.message)
-        }
-      }
-
       return reply.status(201).send({
         success: true,
         eventId: event.id,
-        phoneNumber,
         variablesExtracted: Object.keys(variables).length,
-        autoReply: {
-          enabled: company.autoReplyEnabled,
-          sent: autoReplySent,
-          error: autoReplyError,
-        },
+        variables: Object.keys(variables),
       })
     }
   )
@@ -244,27 +111,21 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
     // List webhook events
     protectedRoutes.get(
       '/events',
-      async (request: FastifyRequest<{ Querystring: { status?: string; page?: string; limit?: string } }>, reply: FastifyReply) => {
-        const { status, page = '1', limit = '20' } = request.query
+      async (request: FastifyRequest<{ Querystring: { page?: string; limit?: string } }>, reply: FastifyReply) => {
+        const { page = '1', limit = '50' } = request.query
         const skip = (parseInt(page) - 1) * parseInt(limit)
-
-        const where: any = { companyId: request.user.companyId }
-        if (status) {
-          where.status = status
-        }
 
         const [events, total] = await Promise.all([
           prisma.webhookEvent.findMany({
-            where,
+            where: { companyId: request.user.companyId },
             include: {
-              instance: { select: { id: true, name: true } },
               variables: true,
             },
             orderBy: { createdAt: 'desc' },
             skip,
             take: parseInt(limit),
           }),
-          prisma.webhookEvent.count({ where }),
+          prisma.webhookEvent.count({ where: { companyId: request.user.companyId } }),
         ])
 
         return reply.send({
@@ -288,7 +149,6 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         const event = await prisma.webhookEvent.findFirst({
           where: { id, companyId: request.user.companyId },
           include: {
-            instance: true,
             variables: true,
           },
         })
@@ -301,12 +161,11 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
       }
     )
 
-    // Update event status
-    protectedRoutes.patch(
-      '/events/:id/status',
+    // Delete event
+    protectedRoutes.delete(
+      '/events/:id',
       async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
         const { id } = request.params
-        const data = updateStatusSchema.parse(request.body)
 
         const event = await prisma.webhookEvent.findFirst({
           where: { id, companyId: request.user.companyId },
@@ -316,265 +175,46 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
           return reply.status(404).send({ error: 'Event not found' })
         }
 
-        const updated = await prisma.webhookEvent.update({
-          where: { id },
-          data: {
-            status: data.status,
-            errorMessage: data.errorMessage,
-            processedAt: data.status === 'PROCESSED' ? new Date() : undefined,
-          },
-        })
+        await prisma.webhookEvent.delete({ where: { id } })
 
-        return reply.send(updated)
+        return reply.send({ success: true })
       }
     )
 
-    // Apply template and enqueue message
-    protectedRoutes.post(
-      '/events/:id/apply-template',
-      async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-        const { id } = request.params
-        const data = applyTemplateSchema.parse(request.body)
-
-        // Get the event
-        const event = await prisma.webhookEvent.findFirst({
-          where: { id, companyId: request.user.companyId },
-          include: { variables: true },
-        })
-
-        if (!event) {
-          return reply.status(404).send({ error: 'Event not found' })
-        }
-
-        // Get the template
-        const template = await prisma.messageTemplate.findFirst({
-          where: { id: data.templateId, companyId: request.user.companyId },
-        })
-
-        if (!template) {
-          return reply.status(404).send({ error: 'Template not found' })
-        }
-
-        // Get the instance
-        const instance = await prisma.instance.findFirst({
-          where: { id: data.instanceId, companyId: request.user.companyId },
-        })
-
-        if (!instance) {
-          return reply.status(404).send({ error: 'Instance not found' })
-        }
-
-        // Validate template compatibility
-        const validation = await channelValidationService.isTemplateCompatible(
-          data.templateId,
-          data.instanceId
-        )
-
-        if (!validation.valid) {
-          return reply.status(400).send({ error: validation.error })
-        }
-
-        // Determine phone number
-        let phoneNumber = event.phoneNumber
-        if (data.phoneNumberField) {
-          const variable = event.variables.find((v) => v.key === data.phoneNumberField)
-          if (variable) {
-            phoneNumber = variable.value.replace(/\D/g, '')
-          }
-        }
-
-        if (!phoneNumber) {
-          return reply.status(400).send({ error: 'No phone number available' })
-        }
-
-        // Build variables from event data
-        const variables: Record<string, string> = {}
-        if (data.variableMapping) {
-          for (const [templateVar, eventVar] of Object.entries(data.variableMapping)) {
-            const variable = event.variables.find((v) => v.key === eventVar)
-            if (variable) {
-              variables[templateVar] = variable.value
-            }
-          }
-        } else {
-          // Auto-map variables by name
-          for (const variable of event.variables) {
-            variables[variable.key] = variable.value
-          }
-        }
-
-        // Apply variables to template
-        const messageContent = channelValidationService.applyVariables(template.bodyText, variables)
-
-        // Add to send queue
-        const queueItem = await prisma.sendQueue.create({
-          data: {
-            companyId: request.user.companyId,
-            instanceId: data.instanceId,
-            phoneNumber,
-            messageContent,
-            templateId: data.templateId,
-            variables,
-            webhookEventId: id,
-            status: 'WAITING',
-          },
-        })
-
-        // Update event
-        await prisma.webhookEvent.update({
-          where: { id },
-          data: {
-            status: 'PROCESSED',
-            instanceId: data.instanceId,
-            templateId: data.templateId,
-            processedAt: new Date(),
-          },
-        })
-
-        return reply.status(201).send({
-          success: true,
-          queueItemId: queueItem.id,
-          message: 'Message queued successfully',
-          preview: messageContent,
-        })
-      }
-    )
-
-    // Direct send (Baileys only, immediate)
-    protectedRoutes.post(
-      '/events/:id/send',
-      async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
-        const { id } = request.params
-        const data = directSendSchema.parse(request.body)
-
-        // Get the event
-        const event = await prisma.webhookEvent.findFirst({
-          where: { id, companyId: request.user.companyId },
-        })
-
-        if (!event) {
-          return reply.status(404).send({ error: 'Event not found' })
-        }
-
-        // Get the instance
-        const instance = await prisma.instance.findFirst({
-          where: { id: data.instanceId, companyId: request.user.companyId },
-        })
-
-        if (!instance) {
-          return reply.status(404).send({ error: 'Instance not found' })
-        }
-
-        // Only allow direct send for Baileys
-        if (instance.channel !== 'BAILEYS') {
-          return reply.status(400).send({
-            error: 'Direct send is only available for Baileys instances. Use templates for Cloud API.',
-          })
-        }
-
-        if (instance.status !== 'CONNECTED') {
-          return reply.status(400).send({ error: 'Instance is not connected' })
-        }
-
-        // Check rate limit
-        const rateCheck = await rateLimiterService.checkRateLimit(data.instanceId, 'BAILEYS')
-        if (!rateCheck.allowed) {
-          return reply.status(429).send({
-            error: rateCheck.reason,
-            waitTimeMs: rateCheck.waitTimeMs,
-            retryAfter: Math.ceil(rateCheck.waitTimeMs / 1000),
-          })
-        }
-
-        // Check instance lock
-        const isAvailable = await instanceLockService.isAvailable(data.instanceId)
-        if (!isAvailable) {
-          return reply.status(423).send({
-            error: 'Instance is currently busy. Please try again.',
-          })
-        }
-
-        // Acquire lock
-        const lockAcquired = await instanceLockService.acquireLock(
-          data.instanceId,
-          request.user.id,
-          'Direct webhook send'
-        )
-
-        if (!lockAcquired) {
-          return reply.status(423).send({
-            error: 'Could not acquire lock on instance',
-          })
-        }
-
-        try {
-          // Create message log
-          const messageLog = await prisma.messageLog.create({
-            data: {
+    // Get available variables (from all past webhooks)
+    protectedRoutes.get(
+      '/variables',
+      async (request: FastifyRequest, reply: FastifyReply) => {
+        // Get unique variable keys from recent webhooks
+        const variables = await prisma.webhookVariable.findMany({
+          where: {
+            webhookEvent: {
               companyId: request.user.companyId,
-              instanceId: data.instanceId,
-              phoneNumber: data.phoneNumber,
-              messageContent: data.message,
-              webhookEventId: id,
-              status: 'PROCESSING',
-            },
-          })
+            }
+          },
+          distinct: ['key'],
+          select: {
+            key: true,
+            valueType: true,
+          },
+          orderBy: { key: 'asc' },
+          take: 200,
+        })
 
-          const startTime = Date.now()
+        // Identify potential phone fields
+        const phonePatterns = ['phone', 'telefone', 'celular', 'whatsapp', 'mobile', 'fone']
+        const suggestedPhoneFields = variables.filter(v =>
+          phonePatterns.some(p => v.key.toLowerCase().includes(p))
+        )
 
-          // Send message via Baileys
-          const jid = data.phoneNumber.includes('@') ? data.phoneNumber : `${data.phoneNumber}@s.whatsapp.net`
-          const result = await baileysManager.sendTextMessage(data.instanceId, jid, data.message)
-
-          // Record rate limit
-          await rateLimiterService.recordSend(data.instanceId, 'BAILEYS')
-
-          // Update message log
-          await prisma.messageLog.update({
-            where: { id: messageLog.id },
-            data: {
-              status: 'SENT',
-              sentAt: new Date(),
-              apiMessageId: result?.key?.id,
-              processingTimeMs: Date.now() - startTime,
-            },
-          })
-
-          // Release lock
-          await instanceLockService.releaseLock(data.instanceId)
-
-          // Update event
-          await prisma.webhookEvent.update({
-            where: { id },
-            data: {
-              status: 'PROCESSED',
-              instanceId: data.instanceId,
-              messageLogId: messageLog.id,
-              processedAt: new Date(),
-            },
-          })
-
-          return reply.send({
-            success: true,
-            messageId: result?.key?.id,
-            messageLogId: messageLog.id,
-          })
-        } catch (error: any) {
-          // Record error
-          await instanceLockService.recordError(data.instanceId, error.message)
-
-          // Update message log
-          await prisma.messageLog.updateMany({
-            where: { webhookEventId: id, status: 'PROCESSING' },
-            data: {
-              status: 'FAILED',
-              failedAt: new Date(),
-              errorMessage: error.message,
-            },
-          })
-
-          throw error
-        }
+        return reply.send({
+          variables: variables.map(v => ({
+            key: v.key,
+            type: v.valueType,
+            placeholder: `{{${v.key}}}`,
+          })),
+          suggestedPhoneFields: suggestedPhoneFields.map(v => v.key),
+        })
       }
     )
 
@@ -605,21 +245,7 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
             headerExample: `X-Webhook-Token: ${company?.webhookToken || 'seu-token'}`,
             queryExample: `?token=${company?.webhookToken || 'seu-token'}`,
           },
-          description: 'Envie qualquer JSON. Telefones serão detectados automaticamente.',
-          commonPhoneFields: [
-            'phone',
-            'phoneNumber',
-            'phone_number',
-            'telefone',
-            'celular',
-            'whatsapp',
-          ],
-          example: {
-            nome: 'João Silva',
-            telefone: '5511999999999',
-            valor: '150.00',
-            vencimento: '25/01/2026',
-          },
+          description: 'Envie qualquer JSON. Variáveis serão extraídas automaticamente.',
         })
       }
     )
@@ -628,7 +254,6 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
     protectedRoutes.post(
       '/generate-token',
       async (request: FastifyRequest, reply: FastifyReply) => {
-        // Generate a secure random token
         const crypto = await import('crypto')
         const newToken = crypto.randomBytes(32).toString('hex')
 
@@ -641,11 +266,7 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         return reply.send({
           success: true,
           webhookToken: company.webhookToken,
-          message: 'Token gerado com sucesso. Use este token para autenticar chamadas ao webhook.',
-          usage: {
-            header: `X-Webhook-Token: ${company.webhookToken}`,
-            queryParam: `?token=${company.webhookToken}`,
-          }
+          message: 'Token gerado com sucesso.',
         })
       }
     )
@@ -666,137 +287,27 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
       }
     )
 
-    // =============================================
-    // AUTO-REPLY CONFIGURATION
-    // =============================================
-
-    // Get auto-reply config
-    protectedRoutes.get(
-      '/auto-reply',
-      async (request: FastifyRequest, reply: FastifyReply) => {
-        const company = await prisma.company.findUnique({
-          where: { id: request.user.companyId },
-          select: {
-            autoReplyEnabled: true,
-            autoReplyTemplateId: true,
-            autoReplyInstanceId: true,
-          }
-        })
-
-        // Get template and instance names for display
-        let templateName = null
-        let instanceName = null
-
-        if (company?.autoReplyTemplateId) {
-          const template = await prisma.messageTemplate.findUnique({
-            where: { id: company.autoReplyTemplateId },
-            select: { name: true }
-          })
-          templateName = template?.name
-        }
-
-        if (company?.autoReplyInstanceId) {
-          const instance = await prisma.instance.findUnique({
-            where: { id: company.autoReplyInstanceId },
-            select: { name: true, status: true }
-          })
-          instanceName = instance?.name
-        }
-
-        return reply.send({
-          enabled: company?.autoReplyEnabled || false,
-          templateId: company?.autoReplyTemplateId || null,
-          templateName,
-          instanceId: company?.autoReplyInstanceId || null,
-          instanceName,
-        })
-      }
-    )
-
-    // Update auto-reply config
-    protectedRoutes.put(
-      '/auto-reply',
-      async (request: FastifyRequest, reply: FastifyReply) => {
-        const body = request.body as {
-          enabled?: boolean
-          templateId?: string | null
-          instanceId?: string | null
-        }
-
-        // Validate template exists if provided
-        if (body.templateId) {
-          const template = await prisma.messageTemplate.findFirst({
-            where: { id: body.templateId, companyId: request.user.companyId }
-          })
-          if (!template) {
-            return reply.status(400).send({ error: 'Template não encontrado' })
-          }
-        }
-
-        // Validate instance exists if provided
-        if (body.instanceId) {
-          const instance = await prisma.instance.findFirst({
-            where: { id: body.instanceId, companyId: request.user.companyId }
-          })
-          if (!instance) {
-            return reply.status(400).send({ error: 'Instância não encontrada' })
-          }
-        }
-
-        const company = await prisma.company.update({
-          where: { id: request.user.companyId },
-          data: {
-            autoReplyEnabled: body.enabled ?? false,
-            autoReplyTemplateId: body.templateId || null,
-            autoReplyInstanceId: body.instanceId || null,
-          },
-          select: {
-            autoReplyEnabled: true,
-            autoReplyTemplateId: true,
-            autoReplyInstanceId: true,
-          }
-        })
-
-        return reply.send({
-          success: true,
-          ...company,
-          message: company.autoReplyEnabled
-            ? 'Disparo automático ativado!'
-            : 'Disparo automático desativado.',
-        })
-      }
-    )
-
-    // Get event statistics
+    // Get stats
     protectedRoutes.get(
       '/stats',
       async (request: FastifyRequest, reply: FastifyReply) => {
         const companyId = request.user.companyId
 
-        const [total, pending, processed, error, ignored] = await Promise.all([
-          prisma.webhookEvent.count({ where: { companyId } }),
-          prisma.webhookEvent.count({ where: { companyId, status: 'PENDING' } }),
-          prisma.webhookEvent.count({ where: { companyId, status: 'PROCESSED' } }),
-          prisma.webhookEvent.count({ where: { companyId, status: 'ERROR' } }),
-          prisma.webhookEvent.count({ where: { companyId, status: 'IGNORED' } }),
-        ])
-
         const today = new Date()
         today.setHours(0, 0, 0, 0)
 
-        const todayCount = await prisma.webhookEvent.count({
-          where: {
-            companyId,
-            createdAt: { gte: today },
-          },
-        })
+        const [total, todayCount] = await Promise.all([
+          prisma.webhookEvent.count({ where: { companyId } }),
+          prisma.webhookEvent.count({
+            where: {
+              companyId,
+              createdAt: { gte: today },
+            },
+          }),
+        ])
 
         return reply.send({
           total,
-          pending,
-          processed,
-          error,
-          ignored,
           todayCount,
         })
       }

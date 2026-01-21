@@ -213,6 +213,43 @@ pm2 restart all
 
 Para suporte, abra uma issue no GitHub ou entre em contato.
 
+---
+
+## Versao Premium
+
+A versao premium inclui recursos avancados para empresas que precisam de mais robustez e integracoes:
+
+### Redundancia de Conexao
+- **3 bibliotecas de conexao WhatsApp** para garantir estabilidade
+- Failover automatico entre libs
+- Reconexao inteligente sem perda de mensagens
+
+### Integracoes Adicionais
+- **Telegram** - Envie e receba mensagens do Telegram
+- **Facebook Messenger** - Integrado com paginas do Facebook
+- **MercadoLivre** - Notificacoes de vendas e perguntas
+- **Mercado Pago** - Webhooks de pagamentos e cobrancas
+
+### Recursos Extras
+- Suporte prioritario
+- Instalacao assistida
+- Atualizacoes antecipadas
+- Dashboard analytics avancado
+
+**Interessado na versao premium? Entre em contato!**
+
+---
+
+## Contribua
+
+Se este projeto te ajudou, considere fazer uma contribuicao:
+
+**Pix:** `21974095194`
+
+Sua contribuicao ajuda a manter o projeto ativo e com novas funcionalidades!
+
+---
+
 ## Licenca
 
 MIT License
