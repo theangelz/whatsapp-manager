@@ -87,6 +87,12 @@ export class CloudAPIProvider {
     return response.data
   }
 
+  async sendRawMessage(body: any) {
+    // Send a raw message body directly to the API
+    const response = await this.client.post(`/${this.phoneNumberId}/messages`, body)
+    return response.data
+  }
+
   async getPhoneNumberInfo() {
     const response = await this.client.get(`/${this.phoneNumberId}`, {
       params: {

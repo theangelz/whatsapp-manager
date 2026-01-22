@@ -39,6 +39,21 @@ export class BaileysManager {
     this.flowEngine = initFlowEngine(this.sendFlowMessage.bind(this))
   }
 
+  // Helper to format JID correctly for individuals and groups
+  private formatJid(to: string): string {
+    // If already has @, return as is
+    if (to.includes('@')) {
+      return to
+    }
+    // Group IDs typically start with a timestamp (e.g., 120363...) and contain a hyphen
+    // or are very long numbers (18+ digits)
+    if (to.includes('-') || (to.length >= 18 && /^\d+$/.test(to))) {
+      return `${to}@g.us`
+    }
+    // Individual contact
+    return `${to}@s.whatsapp.net`
+  }
+
   // Send message from FlowEngine
   private async sendFlowMessage(to: string, content: any, type: string): Promise<void> {
     // Find the instance from the session (we need to get it from context)
@@ -55,7 +70,7 @@ export class BaileysManager {
       return
     }
 
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`
+    const jid = this.formatJid(to)
 
     try {
       switch (type) {
@@ -461,7 +476,7 @@ export class BaileysManager {
       throw new Error('Instance not connected')
     }
 
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`
+    const jid = this.formatJid(to)
 
     const result = await baileysInstance.socket.sendMessage(jid, { text })
 
@@ -500,7 +515,7 @@ export class BaileysManager {
       throw new Error('Instance not connected')
     }
 
-    const jid = to.includes('@') ? to : `${to}@s.whatsapp.net`
+    const jid = this.formatJid(to)
 
     let messageContent: any = {}
 
