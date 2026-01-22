@@ -125,6 +125,9 @@ model Instance {
 
   // Settings
   rejectCalls     Boolean         @default(false)
+  ignoreGroups    Boolean         @default(false)
+  ignoreBroadcasts Boolean        @default(false)
+  ignoreStatus    Boolean         @default(true)
   alwaysOnline    Boolean         @default(false)
   readMessages    Boolean         @default(true)
 

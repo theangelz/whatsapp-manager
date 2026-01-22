@@ -77,6 +77,14 @@ export function Instances() {
     webhookUrl: '',
     webhookEvents: [] as string[],
   })
+  const [baileysSettings, setBaileysSettings] = useState({
+    rejectCalls: false,
+    ignoreGroups: false,
+    ignoreBroadcasts: false,
+    ignoreStatus: true,
+    alwaysOnline: false,
+    readMessages: true,
+  })
 
   const { data: instances, isLoading } = useQuery<Instance[]>({
     queryKey: ['instances'],
@@ -152,7 +160,7 @@ export function Instances() {
   })
 
   const updateWebhookMutation = useMutation({
-    mutationFn: async ({ id, data }: { id: string; data: typeof webhookConfig }) => {
+    mutationFn: async ({ id, data }: { id: string; data: typeof webhookConfig & typeof baileysSettings }) => {
       const response = await api.put(`/instances/${id}`, data)
       return response.data
     },
@@ -161,6 +169,14 @@ export function Instances() {
       setShowWebhookModal(false)
       setWebhookInstance(null)
       setWebhookConfig({ webhookUrl: '', webhookEvents: [] })
+      setBaileysSettings({
+        rejectCalls: false,
+        ignoreGroups: false,
+        ignoreBroadcasts: false,
+        ignoreStatus: true,
+        alwaysOnline: false,
+        readMessages: true,
+      })
     },
   })
 
@@ -232,6 +248,14 @@ export function Instances() {
     setWebhookConfig({
       webhookUrl: instance.webhookUrl || '',
       webhookEvents: instance.webhookEvents || [],
+    })
+    setBaileysSettings({
+      rejectCalls: (instance as any).rejectCalls || false,
+      ignoreGroups: (instance as any).ignoreGroups || false,
+      ignoreBroadcasts: (instance as any).ignoreBroadcasts || false,
+      ignoreStatus: (instance as any).ignoreStatus ?? true,
+      alwaysOnline: (instance as any).alwaysOnline || false,
+      readMessages: (instance as any).readMessages ?? true,
     })
     setShowWebhookModal(true)
   }
@@ -387,8 +411,8 @@ export function Instances() {
                         <DropdownMenuItem
                           onClick={() => handleOpenWebhookConfig(instance)}
                         >
-                          <Webhook className="mr-2 h-4 w-4" />
-                          Configurar Webhook
+                          <Settings className="mr-2 h-4 w-4" />
+                          Configurações
                         </DropdownMenuItem>
                       )}
                       <DropdownMenuSeparator />
@@ -791,17 +815,101 @@ export function Instances() {
 
       {/* Webhook Config Modal for Baileys */}
       <Dialog open={showWebhookModal} onOpenChange={setShowWebhookModal}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle>Configurar Webhook - {webhookInstance?.name}</DialogTitle>
+            <DialogTitle>Configurações - {webhookInstance?.name}</DialogTitle>
             <DialogDescription>
-              Configure a URL para receber notificações de eventos
+              Configure webhook e comportamento da instância
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4">
+            {/* Configurações de Comportamento */}
+            <div className="space-y-3 pb-4 border-b">
+              <Label className="text-base font-semibold">Comportamento</Label>
+
+              <label className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Rejeitar Chamadas</span>
+                  <p className="text-xs text-muted-foreground">Recusar chamadas automaticamente</p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={baileysSettings.rejectCalls}
+                  onChange={(e) => setBaileysSettings({ ...baileysSettings, rejectCalls: e.target.checked })}
+                />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Ignorar Grupos</span>
+                  <p className="text-xs text-muted-foreground">Não processar mensagens de grupos</p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={baileysSettings.ignoreGroups}
+                  onChange={(e) => setBaileysSettings({ ...baileysSettings, ignoreGroups: e.target.checked })}
+                />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Ignorar Broadcasts</span>
+                  <p className="text-xs text-muted-foreground">Não processar listas de transmissão</p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={baileysSettings.ignoreBroadcasts}
+                  onChange={(e) => setBaileysSettings({ ...baileysSettings, ignoreBroadcasts: e.target.checked })}
+                />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Ignorar Status</span>
+                  <p className="text-xs text-muted-foreground">Não processar atualizações de status</p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={baileysSettings.ignoreStatus}
+                  onChange={(e) => setBaileysSettings({ ...baileysSettings, ignoreStatus: e.target.checked })}
+                />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Sempre Online</span>
+                  <p className="text-xs text-muted-foreground">Manter status online sempre</p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={baileysSettings.alwaysOnline}
+                  onChange={(e) => setBaileysSettings({ ...baileysSettings, alwaysOnline: e.target.checked })}
+                />
+              </label>
+
+              <label className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium">Marcar como Lido</span>
+                  <p className="text-xs text-muted-foreground">Marcar mensagens como lidas automaticamente</p>
+                </div>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={baileysSettings.readMessages}
+                  onChange={(e) => setBaileysSettings({ ...baileysSettings, readMessages: e.target.checked })}
+                />
+              </label>
+            </div>
+
+            {/* Webhook */}
             <div className="space-y-2">
-              <Label htmlFor="webhookUrlBaileys">URL do Webhook</Label>
+              <Label className="text-base font-semibold">Webhook</Label>
               <Input
                 id="webhookUrlBaileys"
                 placeholder="https://seu-servidor.com/webhook"
@@ -811,7 +919,7 @@ export function Instances() {
                 }
               />
               <p className="text-xs text-muted-foreground">
-                URL para receber notificações de mensagens enviadas/recebidas
+                URL para receber notificações de mensagens
               </p>
             </div>
 
@@ -860,7 +968,10 @@ export function Instances() {
               variant="whatsapp"
               onClick={() => {
                 if (webhookInstance) {
-                  updateWebhookMutation.mutate({ id: webhookInstance.id, data: webhookConfig })
+                  updateWebhookMutation.mutate({
+                    id: webhookInstance.id,
+                    data: { ...webhookConfig, ...baileysSettings }
+                  })
                 }
               }}
               disabled={updateWebhookMutation.isPending}
