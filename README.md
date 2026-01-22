@@ -246,6 +246,8 @@ Se este projeto te ajudou, considere fazer uma contribuicao:
 
 **Pix:** `21974095194`
 
+**WhatsApp:** [21 97409-5194](https://wa.me/5521974095194)
+
 Sua contribuicao ajuda a manter o projeto ativo e com novas funcionalidades!
 
 ---

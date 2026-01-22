@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import {
   Zap,
@@ -17,6 +17,7 @@ import {
   Clock,
   Send,
   RotateCcw,
+  Code,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -39,12 +40,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import {
-  Tabs,
-  TabsContent,
-  TabsList,
-  TabsTrigger,
-} from '@/components/ui/tabs'
 import api from '@/services/api'
 import type { Automation, AutomationLog, Instance, MetaTemplate } from '@/types'
 
@@ -70,7 +65,11 @@ export function Automations() {
     metaTemplateLanguage: 'pt_BR',
     messageText: '',
     delayBetweenMessages: 3000,
+    cloudApiMessageType: 'text' as 'text' | 'template',
   })
+  const [variableMapping, setVariableMapping] = useState<Record<string, string>>({})
+  const [editJsonMode, setEditJsonMode] = useState(false)
+  const [customJson, setCustomJson] = useState('')
 
   // Fetch automations
   const { data: automations = [], isLoading } = useQuery({
@@ -109,6 +108,91 @@ export function Automations() {
     },
     enabled: !!formData.instanceId && selectedInstance?.channel === 'CLOUD_API',
   })
+
+  // Selected template details
+  const selectedTemplate = useMemo(() => {
+    return metaTemplates.find((t: MetaTemplate) => t.name === formData.metaTemplateName)
+  }, [metaTemplates, formData.metaTemplateName])
+
+  // Extract template variables from components
+  const templateVariables = useMemo(() => {
+    if (!selectedTemplate) return []
+
+    const vars: { index: number; type: string; example?: string }[] = []
+
+    for (const component of selectedTemplate.components || []) {
+      if (component.type === 'BODY' && component.text) {
+        // Find {{1}}, {{2}}, etc in template text
+        const matches = component.text.match(/\{\{(\d+)\}\}/g) || []
+        matches.forEach((match: string) => {
+          const index = parseInt(match.replace(/[{}]/g, ''))
+          if (!vars.find(v => v.index === index)) {
+            vars.push({ index, type: 'body' })
+          }
+        })
+      }
+      if (component.type === 'HEADER' && component.format === 'TEXT' && component.text) {
+        const matches = component.text.match(/\{\{(\d+)\}\}/g) || []
+        matches.forEach((match: string) => {
+          const index = parseInt(match.replace(/[{}]/g, ''))
+          if (!vars.find(v => v.index === index)) {
+            vars.push({ index, type: 'header' })
+          }
+        })
+      }
+    }
+
+    return vars.sort((a, b) => a.index - b.index)
+  }, [selectedTemplate])
+
+  // Generate preview JSON
+  const previewJson = useMemo(() => {
+    if (!selectedTemplate) return null
+
+    const body: any = {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to: `{{${formData.phoneField}}}`,
+      type: 'template',
+      template: {
+        name: formData.metaTemplateName,
+        language: { code: formData.metaTemplateLanguage },
+        components: []
+      }
+    }
+
+    // Add header parameters first (order matters for WhatsApp API)
+    const headerParams = templateVariables
+      .filter(v => v.type === 'header')
+      .map(v => ({
+        type: 'text',
+        text: variableMapping[`header_${v.index}`] ? `{{${variableMapping[`header_${v.index}`]}}}` : `{{variavel_${v.index}}}`
+      }))
+
+    if (headerParams.length > 0) {
+      body.template.components.push({
+        type: 'header',
+        parameters: headerParams
+      })
+    }
+
+    // Add body parameters
+    const bodyParams = templateVariables
+      .filter(v => v.type === 'body')
+      .map(v => ({
+        type: 'text',
+        text: variableMapping[`body_${v.index}`] ? `{{${variableMapping[`body_${v.index}`]}}}` : `{{variavel_${v.index}}}`
+      }))
+
+    if (bodyParams.length > 0) {
+      body.template.components.push({
+        type: 'body',
+        parameters: bodyParams
+      })
+    }
+
+    return body
+  }, [selectedTemplate, formData, variableMapping, templateVariables])
 
   // Fetch endpoint info
   const { data: endpointInfo } = useQuery({
@@ -196,11 +280,29 @@ export function Automations() {
       metaTemplateLanguage: 'pt_BR',
       messageText: '',
       delayBetweenMessages: 3000,
+      cloudApiMessageType: 'text',
     })
+    setVariableMapping({})
+    setEditJsonMode(false)
+    setCustomJson('')
   }
 
   const openEditModal = (automation: Automation) => {
     setSelectedAutomation(automation)
+    // Detect message type: if has metaTemplateName, it's template; otherwise text
+    const messageType = automation.metaTemplateName ? 'template' : 'text'
+    const msgBody = automation.messageBody as any
+
+    // Extract message text - could be simple {text: "..."} or full Cloud API JSON
+    let messageText = ''
+    if (msgBody?.messaging_product) {
+      // Full Cloud API JSON - extract text from text.body
+      messageText = msgBody?.text?.body || ''
+    } else {
+      // Simple format {text: "..."}
+      messageText = msgBody?.text || ''
+    }
+
     setFormData({
       name: automation.name,
       description: automation.description || '',
@@ -208,9 +310,21 @@ export function Automations() {
       phoneField: automation.phoneField,
       metaTemplateName: automation.metaTemplateName || '',
       metaTemplateLanguage: automation.metaTemplateLanguage || 'pt_BR',
-      messageText: automation.messageBody?.text || '',
+      messageText: messageText,
       delayBetweenMessages: automation.delayBetweenMessages,
+      cloudApiMessageType: messageType,
     })
+    setVariableMapping(automation.variableMapping || {})
+
+    // Check if messageBody has custom JSON (not just text field)
+    if (msgBody && msgBody.messaging_product) {
+      setEditJsonMode(true)
+      setCustomJson(JSON.stringify(msgBody, null, 2))
+    } else {
+      setEditJsonMode(false)
+      setCustomJson('')
+    }
+
     setShowCreateModal(true)
   }
 
@@ -225,9 +339,30 @@ export function Automations() {
     }
 
     if (instance?.channel === 'CLOUD_API') {
-      data.metaTemplateName = formData.metaTemplateName
-      data.metaTemplateLanguage = formData.metaTemplateLanguage
+      if (formData.cloudApiMessageType === 'template') {
+        // Template message
+        data.metaTemplateName = formData.metaTemplateName
+        data.metaTemplateLanguage = formData.metaTemplateLanguage
+        data.variableMapping = variableMapping
+        data.messageBody = previewJson
+      } else {
+        // Text message - clear template fields
+        data.metaTemplateName = ''
+        data.variableMapping = {}
+
+        // Check if using custom JSON mode
+        if (editJsonMode && customJson) {
+          try {
+            data.messageBody = JSON.parse(customJson)
+          } catch {
+            data.messageBody = { text: formData.messageText }
+          }
+        } else {
+          data.messageBody = { text: formData.messageText }
+        }
+      }
     } else {
+      // Baileys - always text
       data.messageBody = { text: formData.messageText }
     }
 
@@ -393,7 +528,7 @@ export function Automations() {
 
       {/* Create/Edit Modal */}
       <Dialog open={showCreateModal} onOpenChange={setShowCreateModal}>
-        <DialogContent className="max-w-2xl max-h-[90vh] overflow-auto">
+        <DialogContent className="max-w-4xl max-h-[90vh] overflow-auto">
           <DialogHeader>
             <DialogTitle>
               {selectedAutomation ? 'Editar Automacao' : 'Nova Automacao'}
@@ -467,6 +602,7 @@ export function Automations() {
                           {v.key}
                         </SelectItem>
                       ))}
+                    <SelectItem value="to">to</SelectItem>
                     <SelectItem value="telefone">telefone</SelectItem>
                     <SelectItem value="phone">phone</SelectItem>
                     <SelectItem value="celular">celular</SelectItem>
@@ -487,49 +623,301 @@ export function Automations() {
               </div>
             </div>
 
-            {/* Cloud API - Template Selection */}
+            {/* Cloud API - Choose between Text or Template */}
             {selectedInstance?.channel === 'CLOUD_API' && (
               <div className="space-y-4 p-4 border rounded-lg bg-blue-500/5">
-                <h4 className="font-medium">Configuracao Cloud API</h4>
-                <div className="grid gap-4 md:grid-cols-2">
-                  <div className="space-y-2">
-                    <Label>Template Meta *</Label>
-                    <Select
-                      value={formData.metaTemplateName}
-                      onValueChange={(v) => setFormData({ ...formData, metaTemplateName: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Selecione um template" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {metaTemplates.map((template: MetaTemplate) => (
-                          <SelectItem key={template.name} value={template.name}>
-                            {template.name} ({template.category})
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    <p className="text-xs text-muted-foreground">
-                      Apenas templates aprovados pela Meta
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label>Idioma</Label>
-                    <Select
-                      value={formData.metaTemplateLanguage}
-                      onValueChange={(v) => setFormData({ ...formData, metaTemplateLanguage: v })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="pt_BR">Portugues (BR)</SelectItem>
-                        <SelectItem value="en_US">Ingles (US)</SelectItem>
-                        <SelectItem value="es">Espanhol</SelectItem>
-                      </SelectContent>
-                    </Select>
-                  </div>
+                <h4 className="font-medium flex items-center gap-2">
+                  <Code className="h-4 w-4" />
+                  Configuracao Cloud API
+                </h4>
+
+                {/* Message Type Selection */}
+                <div className="space-y-2">
+                  <Label>Tipo de Mensagem *</Label>
+                  <Select
+                    value={formData.cloudApiMessageType}
+                    onValueChange={(v: 'text' | 'template') => {
+                      setFormData({ ...formData, cloudApiMessageType: v, metaTemplateName: '', messageText: '' })
+                      setVariableMapping({})
+                    }}
+                  >
+                    <SelectTrigger>
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="text">Texto Livre (com variaveis)</SelectItem>
+                      <SelectItem value="template">Template Meta (aprovado)</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <p className="text-xs text-muted-foreground">
+                    {formData.cloudApiMessageType === 'text'
+                      ? 'Envie mensagens personalizadas com variaveis. Cada envio sera cobrado.'
+                      : 'Use templates aprovados pela Meta. Ideal para mensagens fora da janela de 24h.'}
+                  </p>
                 </div>
+
+                {/* Text Message Mode */}
+                {formData.cloudApiMessageType === 'text' && (
+                  <>
+                    {!editJsonMode ? (
+                      <>
+                        <div className="space-y-2">
+                          <Label>Mensagem *</Label>
+                          <Textarea
+                            value={formData.messageText}
+                            onChange={(e) => setFormData({ ...formData, messageText: e.target.value })}
+                            placeholder="Ola {{nome}}, sua cobranca de R$ {{valor}} vence em {{vencimento}}."
+                            rows={4}
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Use {'{{variavel}}'} para inserir valores dinamicos do payload.
+                            Variaveis automaticas: {'{{dataehora}}'}, {'{{data}}'}, {'{{hora}}'}
+                          </p>
+                        </div>
+
+                        {variables.length > 0 && (
+                          <div className="space-y-2">
+                            <Label className="text-sm">Variaveis disponiveis</Label>
+                            <div className="flex gap-1 flex-wrap">
+                              {variables.slice(0, 15).map((v: any) => (
+                                <Badge
+                                  key={v.key}
+                                  variant="outline"
+                                  className="font-mono text-xs cursor-pointer"
+                                  onClick={() => copyToClipboard(v.placeholder)}
+                                >
+                                  {v.placeholder}
+                                </Badge>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {/* JSON Preview for Text */}
+                        {formData.messageText && (
+                          <div className="space-y-2 mt-4">
+                            <div className="flex items-center justify-between">
+                              <Label className="text-sm flex items-center gap-1">
+                                <Code className="h-3 w-3" />
+                                Body JSON (Preview)
+                              </Label>
+                              <Button
+                                variant="outline"
+                                size="sm"
+                                onClick={() => {
+                                  const json = {
+                                    messaging_product: 'whatsapp',
+                                    recipient_type: 'individual',
+                                    to: `{{${formData.phoneField}}}`,
+                                    type: 'text',
+                                    text: {
+                                      preview_url: false,
+                                      body: formData.messageText
+                                    }
+                                  }
+                                  setCustomJson(JSON.stringify(json, null, 2))
+                                  setEditJsonMode(true)
+                                }}
+                              >
+                                <Settings className="h-3 w-3 mr-1" />
+                                Editar JSON
+                              </Button>
+                            </div>
+                            <pre className="p-3 bg-black/80 text-green-400 rounded text-xs overflow-auto max-h-60 font-mono">
+{JSON.stringify({
+  messaging_product: 'whatsapp',
+  recipient_type: 'individual',
+  to: `{{${formData.phoneField}}}`,
+  type: 'text',
+  text: {
+    preview_url: false,
+    body: formData.messageText
+  }
+}, null, 2)}
+                            </pre>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        {/* Custom JSON Edit Mode */}
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <Label>Body JSON (Editavel)</Label>
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => setEditJsonMode(false)}
+                            >
+                              Voltar ao modo simples
+                            </Button>
+                          </div>
+                          <Textarea
+                            value={customJson}
+                            onChange={(e) => setCustomJson(e.target.value)}
+                            placeholder='{"messaging_product": "whatsapp", ...}'
+                            rows={12}
+                            className="font-mono text-xs"
+                          />
+                          <p className="text-xs text-muted-foreground">
+                            Edite o JSON diretamente. Use variaveis como {'{{to}}'}, {'{{mensagem}}'}, {'{{dataehora}}'}.
+                            O campo "to" sera preenchido com o telefone do payload.
+                          </p>
+                        </div>
+
+                        <div className="space-y-2">
+                          <Label className="text-sm">Variaveis automaticas</Label>
+                          <div className="flex gap-1 flex-wrap">
+                            <Badge variant="outline" className="font-mono text-xs cursor-pointer" onClick={() => copyToClipboard('{{dataehora}}')}>{'{{dataehora}}'}</Badge>
+                            <Badge variant="outline" className="font-mono text-xs cursor-pointer" onClick={() => copyToClipboard('{{data}}')}>{'{{data}}'}</Badge>
+                            <Badge variant="outline" className="font-mono text-xs cursor-pointer" onClick={() => copyToClipboard('{{hora}}')}>{'{{hora}}'}</Badge>
+                            {variables.slice(0, 10).map((v: any) => (
+                              <Badge
+                                key={v.key}
+                                variant="outline"
+                                className="font-mono text-xs cursor-pointer"
+                                onClick={() => copyToClipboard(v.placeholder)}
+                              >
+                                {v.placeholder}
+                              </Badge>
+                            ))}
+                          </div>
+                        </div>
+                      </>
+                    )}
+                  </>
+                )}
+
+                {/* Template Mode */}
+                {formData.cloudApiMessageType === 'template' && (
+                  <>
+                    <div className="grid gap-4 md:grid-cols-2">
+                      <div className="space-y-2">
+                        <Label>Template Meta *</Label>
+                        <Select
+                          value={formData.metaTemplateName}
+                          onValueChange={(v) => {
+                            setFormData({ ...formData, metaTemplateName: v })
+                            setVariableMapping({})
+                          }}
+                        >
+                          <SelectTrigger>
+                            <SelectValue placeholder="Selecione um template" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            {metaTemplates.map((template: MetaTemplate) => (
+                              <SelectItem key={template.name} value={template.name}>
+                                {template.name} ({template.category})
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <div className="space-y-2">
+                        <Label>Idioma</Label>
+                        <Select
+                          value={formData.metaTemplateLanguage}
+                          onValueChange={(v) => setFormData({ ...formData, metaTemplateLanguage: v })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="pt_BR">Portugues (BR)</SelectItem>
+                            <SelectItem value="en_US">Ingles (US)</SelectItem>
+                            <SelectItem value="es">Espanhol</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                    </div>
+
+                    {/* Template Content Preview */}
+                    {selectedTemplate && (
+                      <div className="space-y-4 mt-4 p-3 bg-muted/50 rounded-lg">
+                        <div>
+                          <Label className="text-sm">Conteudo do Template</Label>
+                          {selectedTemplate.components?.map((comp: any, idx: number) => (
+                            <div key={idx} className="mt-2">
+                              {comp.type === 'HEADER' && comp.text && (
+                                <p className="text-sm font-medium">{comp.text}</p>
+                              )}
+                              {comp.type === 'BODY' && (
+                                <p className="text-sm text-muted-foreground">{comp.text}</p>
+                              )}
+                              {comp.type === 'FOOTER' && (
+                                <p className="text-xs text-muted-foreground mt-1">{comp.text}</p>
+                              )}
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Variable Mapping */}
+                    {templateVariables.length > 0 && (
+                      <div className="space-y-3 mt-4">
+                        <Label>Mapeamento de Variaveis</Label>
+                        <p className="text-xs text-muted-foreground">
+                          Associe cada variavel do template com um campo do webhook
+                        </p>
+
+                        <div className="grid gap-3">
+                          {templateVariables.map((v) => (
+                            <div key={`${v.type}_${v.index}`} className="flex items-center gap-3">
+                              <div className="w-32 text-sm">
+                                <Badge variant="outline">
+                                  {v.type === 'header' ? 'Header' : 'Body'} {`{{${v.index}}}`}
+                                </Badge>
+                              </div>
+                              <span className="text-muted-foreground">=</span>
+                              <Select
+                                value={variableMapping[`${v.type}_${v.index}`] || ''}
+                                onValueChange={(val) => setVariableMapping({
+                                  ...variableMapping,
+                                  [`${v.type}_${v.index}`]: val
+                                })}
+                              >
+                                <SelectTrigger className="flex-1">
+                                  <SelectValue placeholder="Selecione variavel do webhook" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  {variables.map((wv: any) => (
+                                    <SelectItem key={wv.key} value={wv.key}>
+                                      {`{{${wv.key}}}`}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* JSON Preview for Template */}
+                    {previewJson && (
+                      <div className="space-y-2 mt-4">
+                        <div className="flex items-center justify-between">
+                          <Label className="text-sm flex items-center gap-1">
+                            <Code className="h-3 w-3" />
+                            Body JSON (Preview)
+                          </Label>
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={() => copyToClipboard(JSON.stringify(previewJson, null, 2))}
+                          >
+                            <Copy className="h-3 w-3 mr-1" />
+                            Copiar
+                          </Button>
+                        </div>
+                        <pre className="p-3 bg-black/80 text-green-400 rounded text-xs overflow-auto max-h-60 font-mono">
+                          {JSON.stringify(previewJson, null, 2)}
+                        </pre>
+                      </div>
+                    )}
+                  </>
+                )}
               </div>
             )}
 
@@ -582,7 +970,8 @@ export function Automations() {
                 !formData.instanceId ||
                 createMutation.isPending ||
                 updateMutation.isPending ||
-                (selectedInstance?.channel === 'CLOUD_API' && !formData.metaTemplateName) ||
+                (selectedInstance?.channel === 'CLOUD_API' && formData.cloudApiMessageType === 'template' && !formData.metaTemplateName) ||
+                (selectedInstance?.channel === 'CLOUD_API' && formData.cloudApiMessageType === 'text' && !formData.messageText) ||
                 (selectedInstance?.channel === 'BAILEYS' && !formData.messageText)
               }
             >
@@ -635,11 +1024,29 @@ export function Automations() {
               </div>
 
               <div className="space-y-2">
-                <Label>Exemplo de Payload</Label>
+                <Label>Exemplo de Payload (envie para o endpoint)</Label>
                 <pre className="p-3 bg-muted rounded text-sm overflow-auto">
                   {JSON.stringify(endpointInfo.example, null, 2)}
                 </pre>
               </div>
+
+              {/* Cloud API Body Preview */}
+              {endpointInfo.cloudApiBody && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <Label>Body Cloud API (formato oficial)</Label>
+                    <Badge variant="outline">
+                      {endpointInfo.messageType === 'template' ? 'Template' : 'Texto'}
+                    </Badge>
+                  </div>
+                  <pre className="p-3 bg-black/80 text-green-400 rounded text-xs overflow-auto max-h-60 font-mono">
+                    {JSON.stringify(endpointInfo.cloudApiBody, null, 2)}
+                  </pre>
+                  <p className="text-xs text-muted-foreground">
+                    Este e o formato que sera enviado para a API do WhatsApp. As variaveis serao substituidas pelos valores do payload.
+                  </p>
+                </div>
+              )}
 
               <div className="space-y-2">
                 <Label>Exemplo cURL</Label>

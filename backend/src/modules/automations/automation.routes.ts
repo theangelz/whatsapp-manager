@@ -1,5 +1,6 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
+import { Prisma } from '@prisma/client'
 import { prisma } from '../../config/database.js'
 import { env } from '../../config/env.js'
 import { authMiddleware } from '../../middlewares/auth.middleware.js'
@@ -9,13 +10,13 @@ import { CloudAPIProvider } from '../../providers/cloud-api/cloud-api.provider.j
 // Schemas
 const createAutomationSchema = z.object({
   name: z.string().min(1),
-  description: z.string().optional(),
+  description: z.string().optional().nullable(),
   instanceId: z.string().uuid(),
   delayBetweenMessages: z.number().min(1000).default(3000),
-  metaTemplateName: z.string().optional(),
+  metaTemplateName: z.string().optional().nullable(),
   metaTemplateLanguage: z.string().default('pt_BR'),
-  messageBody: z.any().optional(),
-  variableMapping: z.record(z.string()).optional(),
+  messageBody: z.any().optional().nullable(),
+  variableMapping: z.record(z.string()).optional().nullable(),
   phoneField: z.string().default('telefone'),
 })
 
@@ -152,39 +153,112 @@ export async function automationRoutes(fastify: FastifyInstance) {
         // Build variables from payload
         const variables = buildVariables(payload, automation.variableMapping as Record<string, string> | null)
 
-        if (automation.instance.channel === 'CLOUD_API') {
-          // Cloud API - send template message
-          if (!automation.metaTemplateName) {
-            throw new Error('Template Meta não configurado para Cloud API')
-          }
+        // Add automatic date/time variables
+        const now = new Date()
+        const brDate = now.toLocaleDateString('pt-BR')
+        const brTime = now.toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })
+        const brDateTime = `${brDate} ${brTime}`
 
+        variables.dataehora = brDateTime
+        variables.data = brDate
+        variables.hora = brTime
+        variables.timestamp = now.toISOString()
+
+        if (automation.instance.channel === 'CLOUD_API') {
           const cloudApi = new CloudAPIProvider(automation.instance)
 
-          // Build template components with variables if needed
-          const components: any[] = []
-          if (Object.keys(variables).length > 0) {
-            // Add body parameters
-            const bodyParams = Object.values(variables).map(value => ({
-              type: 'text',
-              text: value,
-            }))
-            if (bodyParams.length > 0) {
-              components.push({
-                type: 'body',
-                parameters: bodyParams,
-              })
+          if (automation.metaTemplateName) {
+            // Cloud API - send template message
+            const components: any[] = []
+            const variableMapping = automation.variableMapping as Record<string, string> | null
+
+            if (variableMapping && Object.keys(variableMapping).length > 0) {
+              const headerVars: { index: number; value: string }[] = []
+              const bodyVars: { index: number; value: string }[] = []
+
+              for (const [key, payloadField] of Object.entries(variableMapping)) {
+                const match = key.match(/^(header|body)_(\d+)$/)
+                if (match) {
+                  const type = match[1]
+                  const index = parseInt(match[2])
+
+                  const parts = payloadField.split('.')
+                  let value = payload
+                  for (const part of parts) {
+                    value = value?.[part]
+                  }
+                  const textValue = value !== undefined && value !== null ? String(value) : ''
+
+                  if (type === 'header') {
+                    headerVars.push({ index, value: textValue })
+                  } else {
+                    bodyVars.push({ index, value: textValue })
+                  }
+                }
+              }
+
+              headerVars.sort((a, b) => a.index - b.index)
+              bodyVars.sort((a, b) => a.index - b.index)
+
+              if (headerVars.length > 0) {
+                components.push({
+                  type: 'header',
+                  parameters: headerVars.map(v => ({ type: 'text', text: v.value })),
+                })
+              }
+
+              if (bodyVars.length > 0) {
+                components.push({
+                  type: 'body',
+                  parameters: bodyVars.map(v => ({ type: 'text', text: v.value })),
+                })
+              }
+            }
+
+            const result = await cloudApi.sendTemplateMessage(
+              phoneNumber,
+              automation.metaTemplateName,
+              automation.metaTemplateLanguage || 'pt_BR',
+              components.length > 0 ? components : undefined
+            )
+
+            messageId = result?.messages?.[0]?.id
+            messageContent = `Template: ${automation.metaTemplateName}`
+          } else {
+            // Cloud API - send text message (no template)
+            const messageBody = automation.messageBody as any
+
+            if (messageBody?.messaging_product) {
+              // Custom JSON body - apply variables to the entire JSON
+              let jsonStr = JSON.stringify(messageBody)
+
+              // Apply all variables to the JSON string
+              for (const [key, value] of Object.entries(variables)) {
+                jsonStr = jsonStr.replace(new RegExp(`{{${key}}}`, 'g'), value)
+              }
+
+              // Replace phone number in "to" field
+              jsonStr = jsonStr.replace(/\{\{to\}\}/g, phoneNumber)
+              jsonStr = jsonStr.replace(/\{\{telefone\}\}/g, phoneNumber)
+              jsonStr = jsonStr.replace(/\{\{phone\}\}/g, phoneNumber)
+
+              const finalBody = JSON.parse(jsonStr)
+              // Ensure "to" has the phone number
+              finalBody.to = phoneNumber
+
+              // Send raw request to Cloud API
+              const result = await cloudApi.sendRawMessage(finalBody)
+              messageId = result?.messages?.[0]?.id
+              messageContent = finalBody.text?.body || JSON.stringify(finalBody).substring(0, 100)
+            } else if (messageBody?.text) {
+              // Simple text message
+              messageContent = applyVariables(messageBody.text, variables)
+              const result = await cloudApi.sendTextMessage(phoneNumber, messageContent)
+              messageId = result?.messages?.[0]?.id
+            } else {
+              throw new Error('Corpo da mensagem não configurado')
             }
           }
-
-          const result = await cloudApi.sendTemplateMessage(
-            phoneNumber,
-            automation.metaTemplateName,
-            automation.metaTemplateLanguage || 'pt_BR',
-            components.length > 0 ? components : undefined
-          )
-
-          messageId = result?.messages?.[0]?.id
-          messageContent = `Template: ${automation.metaTemplateName}`
         } else {
           // Baileys - send text message
           const messageBody = automation.messageBody as any
@@ -195,8 +269,8 @@ export async function automationRoutes(fastify: FastifyInstance) {
           // Apply variables to message
           messageContent = applyVariables(messageBody.text, variables)
 
-          const jid = phoneNumber.includes('@') ? phoneNumber : `${phoneNumber}@s.whatsapp.net`
-          const result = await baileysManager.sendTextMessage(automation.instance.id, jid, messageContent)
+          // sendTextMessage handles JID formatting for both individuals and groups
+          const result = await baileysManager.sendTextMessage(automation.instance.id, phoneNumber, messageContent)
           messageId = result?.key?.id || undefined
         }
 
@@ -322,12 +396,12 @@ export async function automationRoutes(fastify: FastifyInstance) {
             companyId: request.user.companyId,
             instanceId: data.instanceId,
             name: data.name,
-            description: data.description,
+            description: data.description || null,
             delayBetweenMessages: data.delayBetweenMessages,
-            metaTemplateName: data.metaTemplateName,
+            metaTemplateName: data.metaTemplateName || null,
             metaTemplateLanguage: data.metaTemplateLanguage,
-            messageBody: data.messageBody,
-            variableMapping: data.variableMapping,
+            messageBody: data.messageBody ?? Prisma.DbNull,
+            variableMapping: data.variableMapping ?? Prisma.DbNull,
             phoneField: data.phoneField,
           },
           include: {
@@ -367,20 +441,26 @@ export async function automationRoutes(fastify: FastifyInstance) {
           }
         }
 
+        // Prepare update data - convert empty strings to null for optional fields
+        const updateData: any = {}
+        if (data.name !== undefined) updateData.name = data.name
+        if (data.description !== undefined) updateData.description = data.description || null
+        if (data.instanceId !== undefined) updateData.instanceId = data.instanceId
+        if (data.status !== undefined) updateData.status = data.status
+        if (data.delayBetweenMessages !== undefined) updateData.delayBetweenMessages = data.delayBetweenMessages
+        if (data.metaTemplateName !== undefined) updateData.metaTemplateName = data.metaTemplateName || null
+        if (data.metaTemplateLanguage !== undefined) updateData.metaTemplateLanguage = data.metaTemplateLanguage
+        if (data.messageBody !== undefined) updateData.messageBody = data.messageBody ?? Prisma.DbNull
+        if (data.variableMapping !== undefined) {
+          updateData.variableMapping = data.variableMapping && Object.keys(data.variableMapping).length > 0
+            ? data.variableMapping
+            : Prisma.DbNull
+        }
+        if (data.phoneField !== undefined) updateData.phoneField = data.phoneField
+
         const updated = await prisma.automation.update({
           where: { id },
-          data: {
-            name: data.name,
-            description: data.description,
-            instanceId: data.instanceId,
-            status: data.status,
-            delayBetweenMessages: data.delayBetweenMessages,
-            metaTemplateName: data.metaTemplateName,
-            metaTemplateLanguage: data.metaTemplateLanguage,
-            messageBody: data.messageBody,
-            variableMapping: data.variableMapping,
-            phoneField: data.phoneField,
-          },
+          data: updateData,
           include: {
             instance: {
               select: { id: true, name: true, channel: true },
@@ -530,6 +610,70 @@ export async function automationRoutes(fastify: FastifyInstance) {
 
         const triggerUrl = `${env.BACKEND_URL}/api/automations/trigger/${automation.token}`
 
+        // Extract variables from message body
+        const messageBody = automation.messageBody as any
+
+        // Check if it's a custom JSON (full Cloud API format) or simple text
+        const isCustomJson = messageBody?.messaging_product === 'whatsapp'
+
+        // Get message text for variable extraction
+        let messageText = ''
+        if (isCustomJson) {
+          messageText = messageBody?.text?.body || ''
+        } else {
+          messageText = messageBody?.text || ''
+        }
+
+        // Find all {{variable}} patterns in the message
+        const variableMatches = messageText.match(/\{\{(\w+)\}\}/g) || []
+        const extractedVars = variableMatches.map((v: string) => v.replace(/[{}]/g, ''))
+
+        // Build example payload with phone field and extracted variables
+        const examplePayload: Record<string, string> = {
+          [automation.phoneField]: '5511999999999',
+        }
+        extractedVars.forEach((v: string) => {
+          if (v !== automation.phoneField && v !== 'dataehora' && v !== 'data' && v !== 'hora' && v !== 'timestamp') {
+            examplePayload[v] = v === 'mensagem' ? 'Sua mensagem aqui' : `valor_${v}`
+          }
+        })
+
+        // Build Cloud API body preview
+        let cloudApiBody: any = null
+        if (automation.instance.channel === 'CLOUD_API') {
+          if (automation.metaTemplateName) {
+            // Template message format
+            cloudApiBody = {
+              messaging_product: 'whatsapp',
+              recipient_type: 'individual',
+              to: `{{${automation.phoneField}}}`,
+              type: 'template',
+              template: {
+                name: automation.metaTemplateName,
+                language: { code: automation.metaTemplateLanguage || 'pt_BR' },
+                components: [],
+              },
+            }
+          } else if (isCustomJson) {
+            // Custom JSON - show as saved
+            cloudApiBody = messageBody
+          } else {
+            // Simple text message format
+            cloudApiBody = {
+              messaging_product: 'whatsapp',
+              recipient_type: 'individual',
+              to: `{{${automation.phoneField}}}`,
+              type: 'text',
+              text: {
+                preview_url: false,
+                body: messageText || '{{mensagem}}',
+              },
+            }
+          }
+        }
+
+        const curlPayload = JSON.stringify(examplePayload)
+
         return reply.send({
           name: automation.name,
           triggerUrl,
@@ -539,14 +683,12 @@ export async function automationRoutes(fastify: FastifyInstance) {
           instance: automation.instance,
           phoneField: automation.phoneField,
           status: automation.status,
-          example: {
-            [automation.phoneField]: '5511999999999',
-            nome: 'João Silva',
-            valor: '150.00',
-          },
+          messageType: automation.metaTemplateName ? 'template' : 'text',
+          cloudApiBody,
+          example: examplePayload,
           curlExample: `curl -X POST "${triggerUrl}" \\
   -H "Content-Type: application/json" \\
-  -d '{"${automation.phoneField}": "5511999999999", "nome": "João", "valor": "100"}'`,
+  -d '${curlPayload}'`,
         })
       }
     )
