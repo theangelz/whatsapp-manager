@@ -43,15 +43,20 @@ export class BaileysManager {
   private formatJid(to: string): string {
     // If already has @, return as is
     if (to.includes('@')) {
+      console.log(`[formatJid] Already has @: ${to}`)
       return to
     }
-    // Group IDs typically start with a timestamp (e.g., 120363...) and contain a hyphen
-    // or are very long numbers (18+ digits)
-    if (to.includes('-') || (to.length >= 18 && /^\d+$/.test(to))) {
-      return `${to}@g.us`
+    // Group IDs: contain hyphen OR are 18+ digits OR start with 120363 (common group prefix)
+    const isGroup = to.includes('-') || (to.length >= 18 && /^\d+$/.test(to)) || to.startsWith('120363')
+    if (isGroup) {
+      const jid = `${to}@g.us`
+      console.log(`[formatJid] Detected GROUP: ${to} -> ${jid}`)
+      return jid
     }
     // Individual contact
-    return `${to}@s.whatsapp.net`
+    const jid = `${to}@s.whatsapp.net`
+    console.log(`[formatJid] Detected INDIVIDUAL: ${to} -> ${jid}`)
+    return jid
   }
 
   // Send message from FlowEngine
@@ -169,6 +174,23 @@ export class BaileysManager {
     socket.ev.on('messages.update', async (updates) => {
       for (const update of updates) {
         await this.handleMessageStatusUpdate(instanceId, update)
+      }
+    })
+
+    // Handle incoming calls
+    socket.ev.on('call', async (calls) => {
+      const instance = await prisma.instance.findUnique({
+        where: { id: instanceId },
+        select: { rejectCalls: true },
+      })
+
+      if (instance?.rejectCalls) {
+        for (const call of calls) {
+          if (call.status === 'offer') {
+            console.log(`[Call] Rejecting call from ${call.from}`)
+            await socket.rejectCall(call.id, call.from)
+          }
+        }
       }
     })
   }
@@ -299,6 +321,27 @@ export class BaileysManager {
       if (!instance) return
 
       const remoteJid = msg.key.remoteJid || ''
+
+      // Check ignore settings
+      const isGroup = remoteJid.endsWith('@g.us')
+      const isBroadcast = remoteJid.endsWith('@broadcast')
+      const isStatus = remoteJid === 'status@broadcast'
+
+      if (instance.ignoreGroups && isGroup) {
+        console.log(`[handleIncomingMessage] Ignoring group message from ${remoteJid}`)
+        return
+      }
+
+      if (instance.ignoreBroadcasts && isBroadcast) {
+        console.log(`[handleIncomingMessage] Ignoring broadcast message from ${remoteJid}`)
+        return
+      }
+
+      if (instance.ignoreStatus && isStatus) {
+        console.log(`[handleIncomingMessage] Ignoring status message`)
+        return
+      }
+
       const phoneNumber = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '')
 
       let content = ''
@@ -443,6 +486,56 @@ export class BaileysManager {
   private async triggerWebhooks(instance: any, data: any) {
     const axios = (await import('axios')).default
 
+    // Typebot integration
+    if (instance.typebotIntegration?.isActive && data.event === 'message.received') {
+      try {
+        console.log(`[Typebot] Processing message from ${data.from}`)
+        const typebotInt = instance.typebotIntegration
+
+        // Check trigger conditions
+        let shouldTrigger = true
+        if (typebotInt.triggerType === 'keyword' && typebotInt.triggerValue) {
+          shouldTrigger = data.content.toLowerCase().includes(typebotInt.triggerValue.toLowerCase())
+        }
+
+        if (shouldTrigger) {
+          // Send message to Typebot
+          const response = await axios.post(
+            `${typebotInt.typebotUrl}/api/v1/sendMessage`,
+            {
+              sessionId: `${instance.id}-${data.from}`,
+              message: data.content,
+              ...(typebotInt.variables && typeof typebotInt.variables === 'object' ? typebotInt.variables : {}),
+            },
+            {
+              headers: env.TYPEBOT_API_KEY ? { Authorization: `Bearer ${env.TYPEBOT_API_KEY}` } : {},
+              timeout: 10000,
+            }
+          )
+
+          console.log(`[Typebot] Response:`, response.data)
+
+          // Send Typebot responses back to user
+          if (response.data?.messages) {
+            for (const msg of response.data.messages) {
+              if (msg.type === 'text' && msg.content?.richText) {
+                // Extract text from rich text
+                const text = msg.content.richText
+                  .map((block: any) => block.children?.map((c: any) => c.text).join('') || '')
+                  .join('\n')
+                if (text) {
+                  const jid = data.from.includes('@') ? data.from : `${data.from}@s.whatsapp.net`
+                  await this.sendTextMessage(instance.id, jid, text)
+                }
+              }
+            }
+          }
+        }
+      } catch (error: any) {
+        console.error('[Typebot] Error:', error.response?.data || error.message)
+      }
+    }
+
     // Custom webhook
     if (instance.webhookUrl && instance.webhookEvents.includes(data.event)) {
       try {
@@ -473,12 +566,26 @@ export class BaileysManager {
   async sendTextMessage(instanceId: string, to: string, text: string): Promise<proto.WebMessageInfo | null> {
     const baileysInstance = this.instances.get(instanceId)
     if (!baileysInstance?.socket) {
+      console.error(`[sendTextMessage] Instance ${instanceId} not found or not connected`)
       throw new Error('Instance not connected')
     }
 
+    // Check if socket is actually connected
+    const socketUser = baileysInstance.socket.user
+    if (!socketUser) {
+      console.error(`[sendTextMessage] Socket user is null - session may be invalid`)
+      throw new Error('Session invalid - please reconnect')
+    }
+
     const jid = this.formatJid(to)
+    console.log(`[sendTextMessage] Sending to: ${jid}, text length: ${text.length}`)
 
     const result = await baileysInstance.socket.sendMessage(jid, { text })
+    console.log(`[sendTextMessage] Result:`, JSON.stringify(result?.key || 'no result'))
+
+    if (!result?.key?.id) {
+      console.error(`[sendTextMessage] No message ID returned - message may not have been sent`)
+    }
 
     // Save message
     await prisma.message.create({
