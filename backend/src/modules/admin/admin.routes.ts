@@ -17,7 +17,7 @@ const execEnv = {
 }
 
 // Current version
-const CURRENT_VERSION = '2.1.9'
+const CURRENT_VERSION = '2.1.10'
 const GITHUB_REPO = 'theangelz/whatsapp-manager'
 
 // Lista de emails de super admin
