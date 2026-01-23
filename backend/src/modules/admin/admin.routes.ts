@@ -456,19 +456,19 @@ export async function adminRoutes(fastify: FastifyInstance) {
       }
 
       // Step 5: Restart PM2 services
+      // Send complete BEFORE restart because the connection will drop when backend restarts
       sendEvent('restart', 'running', 'Reiniciando servicos...')
-      try {
-        await execAsync('pm2 restart all', { timeout: 30000, env: execEnv })
-        sendEvent('restart', 'done', 'Servicos reiniciados com sucesso')
-      } catch (error: any) {
-        sendEvent('restart', 'error', 'Erro ao reiniciar servicos', error.message)
-        reply.raw.end()
-        return
-      }
-
-      // Complete
-      sendEvent('complete', 'done', 'Atualizacao concluida com sucesso!')
+      sendEvent('complete', 'done', 'Atualizacao concluida! Reiniciando...')
       reply.raw.end()
+
+      // Restart after a small delay to ensure the response is sent
+      setTimeout(async () => {
+        try {
+          await execAsync('pm2 restart all', { timeout: 30000, env: execEnv })
+        } catch (error) {
+          console.error('Erro ao reiniciar PM2:', error)
+        }
+      }, 500)
     } catch (error: any) {
       sendEvent('error', 'error', 'Erro inesperado na atualizacao', error.message)
       reply.raw.end()
