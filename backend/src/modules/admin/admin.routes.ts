@@ -401,10 +401,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
         return
       }
 
-      // Step 2: Install backend dependencies
+      // Step 2: Install backend dependencies (include dev for typescript)
       sendEvent('backend', 'running', 'Instalando dependencias do backend...')
       try {
-        await execAsync('cd /root/whatsapp-manager/backend && npm install', { timeout: 120000, env: execEnv })
+        await execAsync('cd /root/whatsapp-manager/backend && npm install --include=dev', { timeout: 120000, env: execEnv })
         sendEvent('backend', 'done', 'Dependencias do backend instaladas')
       } catch (error: any) {
         sendEvent('backend', 'error', 'Erro ao instalar dependencias do backend', error.message)

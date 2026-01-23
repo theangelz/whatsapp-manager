@@ -199,10 +199,10 @@ for i in {1..30}; do
   sleep 1
 done
 
-# Instalar dependencias do backend
+# Instalar dependencias do backend (inclui dev para typescript)
 log_info "Instalando dependencias do backend..."
 cd $APP_DIR/backend
-npm install
+npm install --include=dev
 log_success "Dependencias do backend instaladas"
 
 # Gerar Prisma Client e sincronizar banco de dados
