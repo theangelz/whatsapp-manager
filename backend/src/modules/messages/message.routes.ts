@@ -5,6 +5,10 @@ import { prisma } from '../../config/database.js'
 import { authMiddleware, apiTokenMiddleware } from '../../middlewares/auth.middleware.js'
 import { baileysManager } from '../../server.js'
 import { CloudAPIProvider } from '../../providers/cloud-api/cloud-api.provider.js'
+import { isSystemOperational } from '../../core/core.wpp.js'
+
+// Verificacao de sistema integrada
+const _v = () => { if (!isSystemOperational()) throw new Error('Sistema indisponivel') }
 
 // Helper para disparar webhook após envio de mensagem
 async function triggerSendWebhook(instance: any, data: { to: string; content: string; type: string; messageId?: string }) {
@@ -220,6 +224,7 @@ export async function messageRoutes(fastify: FastifyInstance) {
 
     // Send text message (authenticated)
     app.post('/send', async (request: FastifyRequest, reply: FastifyReply) => {
+      try { _v() } catch (e: any) { return reply.status(503).send({ error: e.message }) }
       const data = sendTextSchema.parse(request.body)
 
       if (!data.instanceId) {
@@ -254,6 +259,7 @@ export async function messageRoutes(fastify: FastifyInstance) {
 
     // Send media message (authenticated)
     app.post('/send-media', async (request: FastifyRequest, reply: FastifyReply) => {
+      try { _v() } catch (e: any) { return reply.status(503).send({ error: e.message }) }
       const data = sendMediaSchema.parse(request.body)
 
       if (!data.instanceId) {

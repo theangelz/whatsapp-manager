@@ -7,7 +7,9 @@ node_modules/
 build/
 # Frontend dist is built locally
 frontend/dist/
-# Backend dist is included (with obfuscated core)
+# Backend dist (core files kept local only for protection)
+backend/dist/
+backend/lib/
 
 # Environment files
 .env
@@ -58,6 +60,8 @@ coverage/
 *.backup
 Sjnetworkfront-main/
 .claude/
+DESENVOLVIMENTO.md
 
 # Core compiled files (keep wrapper .ts and obfuscated dist)
 backend/src/core/compiled/
+backend/src/*.ORIGINAL.ts
