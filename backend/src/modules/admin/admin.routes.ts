@@ -1,8 +1,17 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import bcrypt from 'bcryptjs'
+import { exec } from 'child_process'
+import { promisify } from 'util'
 import { prisma } from '../../config/database.js'
 import { authMiddleware } from '../../middlewares/auth.middleware.js'
+import { isSystemOperational } from '../../core/core.wpp.js'
+
+const execAsync = promisify(exec)
+
+// Current version
+const CURRENT_VERSION = '2.1.2'
+const GITHUB_REPO = 'theangelz/whatsapp-manager'
 
 // Lista de emails de super admin
 const ADMIN_EMAILS = ['admin@whatsapp', 'admin@whatsapp.local']
@@ -287,6 +296,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
 
   // Get admin stats
   fastify.get('/stats', async (request, reply) => {
+    // Verificacao de sistema
+    if (!isSystemOperational()) {
+      return reply.status(503).send({ error: 'Sistema indisponivel' })
+    }
+
     const [
       totalCompanies,
       activeCompanies,
@@ -325,6 +339,68 @@ export async function adminRoutes(fastify: FastifyInstance) {
         total: totalMessages,
         today: todayMessages,
       },
+    })
+  })
+
+  // Check for updates
+  fastify.get('/check-update', async (request, reply) => {
+    try {
+      const axios = (await import('axios')).default
+      const response = await axios.get(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`, {
+        headers: { 'Accept': 'application/vnd.github.v3+json' },
+        timeout: 10000,
+      })
+
+      const latestVersion = response.data.tag_name.replace('v', '')
+      const hasUpdate = latestVersion !== CURRENT_VERSION
+
+      return reply.send({
+        currentVersion: CURRENT_VERSION,
+        latestVersion,
+        hasUpdate,
+        releaseUrl: response.data.html_url,
+        releaseNotes: response.data.body,
+        publishedAt: response.data.published_at,
+      })
+    } catch (error: any) {
+      return reply.status(500).send({ error: 'Erro ao verificar atualizacoes', details: error.message })
+    }
+  })
+
+  // Execute update
+  fastify.post('/execute-update', async (request, reply) => {
+    try {
+      // Step 1: Git pull
+      const { stdout: gitOutput } = await execAsync('cd /root/whatsapp-manager && git pull origin main', { timeout: 60000 })
+
+      // Step 2: Install backend dependencies
+      await execAsync('cd /root/whatsapp-manager/backend && npm install', { timeout: 120000 })
+
+      // Step 3: Install frontend dependencies and build
+      await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 180000 })
+
+      // Step 4: Restart PM2 services
+      await execAsync('pm2 restart all', { timeout: 30000 })
+
+      return reply.send({
+        success: true,
+        message: 'Sistema atualizado com sucesso! Os servicos foram reiniciados.',
+        gitOutput,
+      })
+    } catch (error: any) {
+      return reply.status(500).send({
+        success: false,
+        error: 'Erro ao atualizar sistema',
+        details: error.message,
+      })
+    }
+  })
+
+  // Get current version
+  fastify.get('/version', async (request, reply) => {
+    return reply.send({
+      version: CURRENT_VERSION,
+      systemOperational: isSystemOperational(),
     })
   })
 }
