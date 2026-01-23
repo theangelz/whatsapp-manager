@@ -10,7 +10,7 @@ import { isSystemOperational } from '../../core/core.wpp.js'
 const execAsync = promisify(exec)
 
 // Current version
-const CURRENT_VERSION = '2.1.1'
+const CURRENT_VERSION = '2.1.2'
 const GITHUB_REPO = 'theangelz/whatsapp-manager'
 
 // Lista de emails de super admin
