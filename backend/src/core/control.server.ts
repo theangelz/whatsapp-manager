@@ -5,4 +5,4 @@
  */
 
 // Re-export from compiled obfuscated module
-export * from '../../dist/core/control.server.js'
+export * from '../../lib/core/control.server.js'
