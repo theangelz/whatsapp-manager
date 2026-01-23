@@ -423,10 +423,10 @@ export async function adminRoutes(fastify: FastifyInstance) {
         return
       }
 
-      // Step 4: Install frontend dependencies and build
+      // Step 4: Install frontend dependencies and build (include dev for typescript)
       sendEvent('frontend', 'running', 'Instalando dependencias e compilando frontend...')
       try {
-        await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 300000, env: execEnv })
+        await execAsync('cd /root/whatsapp-manager/frontend && npm install --include=dev && npm run build', { timeout: 300000, env: execEnv })
         sendEvent('frontend', 'done', 'Frontend compilado com sucesso')
       } catch (error: any) {
         sendEvent('frontend', 'error', 'Erro ao compilar frontend', error.message)
