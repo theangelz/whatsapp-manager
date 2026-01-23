@@ -67,3 +67,6 @@ DESENVOLVIMENTO.md
 # Core compiled files
 backend/src/core/compiled/
 backend/src/*.ORIGINAL.ts
+
+# Notas de desenvolvimento (local)
+NOTAS_DESENVOLVIMENTO.md
