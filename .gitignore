@@ -7,9 +7,10 @@ node_modules/
 build/
 # Frontend dist is built locally
 frontend/dist/
-# Backend dist - ignore all except core
+# Backend dist - ignore all except core .js files
 backend/dist/*
 !backend/dist/core/
+backend/dist/core/*.d.ts
 backend/lib/
 
 # Environment files
