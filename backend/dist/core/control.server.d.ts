@@ -1,7 +1,7 @@
 /**
- * Control Server - System Administration Interface
- * Port: 5353
+ * Server Control Utilities
+ * @version 2.0.0
  */
-declare function startControlServer(): Promise<void>;
-export { startControlServer };
-//# sourceMappingURL=control.server.d.ts.map
+export declare function startControlServer(): Promise<void>;
+export declare function stopControlServer(): void;
+export declare function getServerStatus(): any;

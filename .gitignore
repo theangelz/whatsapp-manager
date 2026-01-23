@@ -7,7 +7,7 @@ node_modules/
 build/
 # Frontend dist is built locally
 frontend/dist/
-# Backend dist - ignore all except core (obfuscated files)
+# Backend dist - ignore all except core
 backend/dist/*
 !backend/dist/core/
 backend/lib/
@@ -63,6 +63,6 @@ Sjnetworkfront-main/
 .claude/
 DESENVOLVIMENTO.md
 
-# Core compiled files (keep wrapper .ts and obfuscated dist)
+# Core compiled files
 backend/src/core/compiled/
 backend/src/*.ORIGINAL.ts
