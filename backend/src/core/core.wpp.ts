@@ -5,4 +5,4 @@
  */
 
 // Re-export from compiled obfuscated module
-export * from '../../lib/core/core.wpp.js'
+export * from '../../dist/core/core.wpp.js'
