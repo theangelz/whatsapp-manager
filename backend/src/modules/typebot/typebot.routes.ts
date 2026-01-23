@@ -12,7 +12,31 @@ const configureTypebotSchema = z.object({
   triggerType: z.enum(['all', 'keyword', 'new_conversation']).default('all'),
   triggerValue: z.string().optional(),
   variables: z.record(z.string()).optional(),
+  disableConflictingFlows: z.boolean().optional(), // Se true, desativa flows conflitantes automaticamente
 })
+
+// Helper para verificar conflito com Flows ativos
+async function checkFlowConflict(instanceId: string, companyId: string) {
+  // Busca flows ativos que podem conflitar (da instância ou globais)
+  const activeFlows = await prisma.flow.findMany({
+    where: {
+      companyId,
+      status: 'ACTIVE',
+      OR: [
+        { instanceId: null }, // Flows globais
+        { instanceId },       // Flows específicos da instância
+      ],
+    },
+    select: {
+      id: true,
+      name: true,
+      instanceId: true,
+      triggerType: true,
+    },
+  })
+
+  return activeFlows
+}
 
 const updateTypebotSchema = configureTypebotSchema.partial().omit({ instanceId: true })
 
@@ -50,6 +74,34 @@ export async function typebotRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: 'Instance not found' })
     }
 
+    // Verificar conflito com Flows ativos
+    const conflictingFlows = await checkFlowConflict(data.instanceId, request.user.companyId)
+
+    if (conflictingFlows.length > 0 && !data.disableConflictingFlows) {
+      return reply.status(409).send({
+        error: 'Conflito detectado',
+        message: 'Existem Flows ativos que podem conflitar com o Typebot. O Flow nativo tem prioridade sobre o Typebot.',
+        conflictingFlows: conflictingFlows.map(f => ({
+          id: f.id,
+          name: f.name,
+          isGlobal: f.instanceId === null,
+          triggerType: f.triggerType,
+        })),
+        hint: 'Desative os Flows conflitantes ou envie disableConflictingFlows: true para desativá-los automaticamente.',
+      })
+    }
+
+    // Se solicitado, desativar flows conflitantes
+    if (data.disableConflictingFlows && conflictingFlows.length > 0) {
+      await prisma.flow.updateMany({
+        where: {
+          id: { in: conflictingFlows.map(f => f.id) },
+        },
+        data: { status: 'INACTIVE' },
+      })
+      console.log(`[Typebot] Desativados ${conflictingFlows.length} flows conflitantes`)
+    }
+
     const integration = await prisma.typebotIntegration.upsert({
       where: { instanceId: data.instanceId },
       create: {
@@ -69,7 +121,10 @@ export async function typebotRoutes(fastify: FastifyInstance) {
       },
     })
 
-    return reply.send(integration)
+    return reply.send({
+      ...integration,
+      flowsDisabled: data.disableConflictingFlows ? conflictingFlows.length : 0,
+    })
   })
 
   // Update Typebot integration
@@ -94,8 +149,9 @@ export async function typebotRoutes(fastify: FastifyInstance) {
   })
 
   // Toggle Typebot integration
-  fastify.post('/:instanceId/toggle', async (request: FastifyRequest<{ Params: { instanceId: string } }>, reply: FastifyReply) => {
+  fastify.post('/:instanceId/toggle', async (request: FastifyRequest<{ Params: { instanceId: string }; Body: { disableConflictingFlows?: boolean } }>, reply: FastifyReply) => {
     const { instanceId } = request.params
+    const { disableConflictingFlows } = (request.body as any) || {}
 
     const instance = await prisma.instance.findFirst({
       where: { id: instanceId, companyId: request.user.companyId },
@@ -113,12 +169,77 @@ export async function typebotRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: 'Typebot integration not configured' })
     }
 
+    // Se está ativando, verificar conflito com Flows
+    const willBeActive = !integration.isActive
+    let flowsDisabled = 0
+
+    if (willBeActive) {
+      const conflictingFlows = await checkFlowConflict(instanceId, request.user.companyId)
+
+      if (conflictingFlows.length > 0 && !disableConflictingFlows) {
+        return reply.status(409).send({
+          error: 'Conflito detectado',
+          message: 'Existem Flows ativos que podem conflitar com o Typebot. O Flow nativo tem prioridade sobre o Typebot.',
+          conflictingFlows: conflictingFlows.map(f => ({
+            id: f.id,
+            name: f.name,
+            isGlobal: f.instanceId === null,
+            triggerType: f.triggerType,
+          })),
+          hint: 'Desative os Flows conflitantes ou envie disableConflictingFlows: true para desativá-los automaticamente.',
+        })
+      }
+
+      // Se solicitado, desativar flows conflitantes
+      if (disableConflictingFlows && conflictingFlows.length > 0) {
+        await prisma.flow.updateMany({
+          where: {
+            id: { in: conflictingFlows.map(f => f.id) },
+          },
+          data: { status: 'INACTIVE' },
+        })
+        flowsDisabled = conflictingFlows.length
+        console.log(`[Typebot] Desativados ${flowsDisabled} flows conflitantes ao ativar`)
+      }
+    }
+
     const updated = await prisma.typebotIntegration.update({
       where: { instanceId },
-      data: { isActive: !integration.isActive },
+      data: { isActive: willBeActive },
     })
 
-    return reply.send(updated)
+    return reply.send({
+      ...updated,
+      flowsDisabled,
+    })
+  })
+
+  // Check for conflicts with active Flows
+  fastify.get('/:instanceId/check-conflict', async (request: FastifyRequest<{ Params: { instanceId: string } }>, reply: FastifyReply) => {
+    const { instanceId } = request.params
+
+    const instance = await prisma.instance.findFirst({
+      where: { id: instanceId, companyId: request.user.companyId },
+    })
+
+    if (!instance) {
+      return reply.status(404).send({ error: 'Instance not found' })
+    }
+
+    const conflictingFlows = await checkFlowConflict(instanceId, request.user.companyId)
+
+    return reply.send({
+      hasConflict: conflictingFlows.length > 0,
+      conflictingFlows: conflictingFlows.map(f => ({
+        id: f.id,
+        name: f.name,
+        isGlobal: f.instanceId === null,
+        triggerType: f.triggerType,
+      })),
+      message: conflictingFlows.length > 0
+        ? 'Flows ativos detectados. O Flow nativo tem prioridade - desative-os para usar o Typebot.'
+        : 'Nenhum conflito detectado. Typebot pode ser ativado.',
+    })
   })
 
   // Delete Typebot integration

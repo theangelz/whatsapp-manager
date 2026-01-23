@@ -8,6 +8,7 @@ import {
   Trash2,
   ExternalLink,
   Loader2,
+  AlertTriangle,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -33,9 +34,19 @@ import {
 import api from '@/services/api'
 import type { Instance, TypebotIntegration } from '@/types'
 
+interface ConflictingFlow {
+  id: string
+  name: string
+  isGlobal: boolean
+  triggerType: string
+}
+
 export function Typebot() {
   const queryClient = useQueryClient()
   const [showModal, setShowModal] = useState(false)
+  const [showConflictModal, setShowConflictModal] = useState(false)
+  const [conflictingFlows, setConflictingFlows] = useState<ConflictingFlow[]>([])
+  const [pendingAction, setPendingAction] = useState<{ type: 'create' | 'toggle'; instanceId: string } | null>(null)
   const [formData, setFormData] = useState({
     instanceId: '',
     typebotId: '',
@@ -64,12 +75,14 @@ export function Typebot() {
   }
 
   const createMutation = useMutation({
-    mutationFn: async (data: typeof formData) => {
+    mutationFn: async (data: typeof formData & { disableConflictingFlows?: boolean }) => {
       return api.post('/typebot', data)
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['instances'] })
       setShowModal(false)
+      setShowConflictModal(false)
+      setPendingAction(null)
       setFormData({
         instanceId: '',
         typebotId: '',
@@ -78,14 +91,32 @@ export function Typebot() {
         triggerValue: '',
       })
     },
+    onError: (error: any) => {
+      if (error.response?.status === 409) {
+        const data = error.response.data
+        setConflictingFlows(data.conflictingFlows || [])
+        setPendingAction({ type: 'create', instanceId: formData.instanceId })
+        setShowConflictModal(true)
+      }
+    },
   })
 
   const toggleMutation = useMutation({
-    mutationFn: async (instanceId: string) => {
-      return api.post(`/typebot/${instanceId}/toggle`)
+    mutationFn: async ({ instanceId, disableConflictingFlows }: { instanceId: string; disableConflictingFlows?: boolean }) => {
+      return api.post(`/typebot/${instanceId}/toggle`, { disableConflictingFlows })
     },
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['instances'] })
+      setShowConflictModal(false)
+      setPendingAction(null)
+    },
+    onError: (error: any, variables) => {
+      if (error.response?.status === 409) {
+        const data = error.response.data
+        setConflictingFlows(data.conflictingFlows || [])
+        setPendingAction({ type: 'toggle', instanceId: variables.instanceId })
+        setShowConflictModal(true)
+      }
     },
   })
 
@@ -186,7 +217,7 @@ export function Typebot() {
                       <Button
                         variant="outline"
                         size="icon"
-                        onClick={() => toggleMutation.mutate(instance.id)}
+                        onClick={() => toggleMutation.mutate({ instanceId: instance.id })}
                         disabled={toggleMutation.isPending}
                       >
                         <Power className="h-4 w-4" />
@@ -329,6 +360,84 @@ export function Typebot() {
                 <Loader2 className="mr-2 h-4 w-4 animate-spin" />
               )}
               Salvar
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Conflict Dialog */}
+      <Dialog open={showConflictModal} onOpenChange={setShowConflictModal}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-yellow-600">
+              <AlertTriangle className="h-5 w-5" />
+              Conflito Detectado
+            </DialogTitle>
+            <DialogDescription>
+              Existem Flows ativos que podem conflitar com o Typebot. O Flow nativo tem prioridade sobre o Typebot.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-4">
+            <div className="flex items-start gap-3 p-3 bg-yellow-50 dark:bg-yellow-950 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+              <AlertTriangle className="h-5 w-5 text-yellow-600 flex-shrink-0 mt-0.5" />
+              <div>
+                <p className="font-medium text-yellow-800 dark:text-yellow-200">Flows Ativos</p>
+                <p className="text-sm text-yellow-700 dark:text-yellow-300">
+                  Os seguintes flows estão ativos e serão processados antes do Typebot:
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-2">
+              {conflictingFlows.map((flow) => (
+                <div
+                  key={flow.id}
+                  className="flex items-center justify-between p-3 bg-muted rounded-lg"
+                >
+                  <div>
+                    <p className="font-medium">{flow.name}</p>
+                    <p className="text-sm text-muted-foreground">
+                      Gatilho: {flow.triggerType} {flow.isGlobal ? '(Global)' : ''}
+                    </p>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <p className="text-sm text-muted-foreground">
+              Para que o Typebot funcione, você pode desativar os Flows conflitantes automaticamente.
+            </p>
+          </div>
+
+          <DialogFooter className="flex gap-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                setShowConflictModal(false)
+                setPendingAction(null)
+              }}
+            >
+              Cancelar
+            </Button>
+            <Button
+              variant="destructive"
+              onClick={() => {
+                if (pendingAction?.type === 'create') {
+                  createMutation.mutate({ ...formData, disableConflictingFlows: true })
+                } else if (pendingAction?.type === 'toggle') {
+                  toggleMutation.mutate({
+                    instanceId: pendingAction.instanceId,
+                    disableConflictingFlows: true,
+                  })
+                }
+              }}
+              disabled={createMutation.isPending || toggleMutation.isPending}
+            >
+              {(createMutation.isPending || toggleMutation.isPending) && (
+                <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              )}
+              Desativar Flows e Continuar
             </Button>
           </DialogFooter>
         </DialogContent>
