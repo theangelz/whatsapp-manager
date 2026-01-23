@@ -80,7 +80,9 @@ export function Header() {
 
     // Get the base URL from the API config
     const baseUrl = api.defaults.baseURL || ''
-    const token = localStorage.getItem('token')
+    // Get token from zustand persisted storage
+    const authStorage = localStorage.getItem('auth-storage')
+    const token = authStorage ? JSON.parse(authStorage)?.state?.token : null
 
     // Close any existing connection
     if (eventSourceRef.current) {
@@ -123,12 +125,15 @@ export function Header() {
       }
     }
 
-    eventSource.onerror = () => {
-      if (currentStep !== 'complete' && currentStep !== 'error') {
-        setCurrentStep('error')
-        setErrorMessage('Conexão perdida com o servidor. Verifique se a atualização foi concluída.')
-        setIsUpdating(false)
+    eventSource.onerror = (e) => {
+      // Only set error if not already completed or errored
+      // Use a flag to track if we've handled the connection
+      if (eventSource.readyState === EventSource.CLOSED) {
+        return // Already closed, ignore
       }
+      setCurrentStep('error')
+      setErrorMessage('Conexão perdida com o servidor. Verifique se a atualização foi concluída.')
+      setIsUpdating(false)
       eventSource.close()
     }
   }

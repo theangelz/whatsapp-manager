@@ -9,6 +9,12 @@ import { isSystemOperational } from '../../core/core.wpp.js'
 
 const execAsync = promisify(exec)
 
+// Environment for exec commands - ensure PATH includes common locations
+const execEnv = {
+  ...process.env,
+  PATH: `/root/.nvm/versions/node/v20.20.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${process.env.PATH || ''}`
+}
+
 // Current version
 const CURRENT_VERSION = '2.1.5'
 const GITHUB_REPO = 'theangelz/whatsapp-manager'
@@ -387,7 +393,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       // Step 1: Git pull
       sendEvent('git', 'running', 'Baixando atualizacoes do repositorio...')
       try {
-        const { stdout: gitOutput } = await execAsync('cd /root/whatsapp-manager && git pull origin main', { timeout: 60000 })
+        const { stdout: gitOutput } = await execAsync('cd /root/whatsapp-manager && git pull origin main', { timeout: 60000, env: execEnv })
         sendEvent('git', 'done', 'Codigo atualizado com sucesso', gitOutput)
       } catch (error: any) {
         sendEvent('git', 'error', 'Erro ao baixar atualizacoes', error.message)
@@ -398,7 +404,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       // Step 2: Install backend dependencies
       sendEvent('backend', 'running', 'Instalando dependencias do backend...')
       try {
-        await execAsync('cd /root/whatsapp-manager/backend && npm install', { timeout: 120000 })
+        await execAsync('cd /root/whatsapp-manager/backend && npm install', { timeout: 120000, env: execEnv })
         sendEvent('backend', 'done', 'Dependencias do backend instaladas')
       } catch (error: any) {
         sendEvent('backend', 'error', 'Erro ao instalar dependencias do backend', error.message)
@@ -409,7 +415,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       // Step 3: Build backend
       sendEvent('build-backend', 'running', 'Compilando backend...')
       try {
-        await execAsync('cd /root/whatsapp-manager/backend && npm run build', { timeout: 120000 })
+        await execAsync('cd /root/whatsapp-manager/backend && npm run build', { timeout: 120000, env: execEnv })
         sendEvent('build-backend', 'done', 'Backend compilado com sucesso')
       } catch (error: any) {
         sendEvent('build-backend', 'error', 'Erro ao compilar backend', error.message)
@@ -420,7 +426,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       // Step 4: Install frontend dependencies and build
       sendEvent('frontend', 'running', 'Instalando dependencias e compilando frontend...')
       try {
-        await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 300000 })
+        await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 300000, env: execEnv })
         sendEvent('frontend', 'done', 'Frontend compilado com sucesso')
       } catch (error: any) {
         sendEvent('frontend', 'error', 'Erro ao compilar frontend', error.message)
@@ -431,7 +437,7 @@ export async function adminRoutes(fastify: FastifyInstance) {
       // Step 5: Restart PM2 services
       sendEvent('restart', 'running', 'Reiniciando servicos...')
       try {
-        await execAsync('pm2 restart all', { timeout: 30000 })
+        await execAsync('pm2 restart all', { timeout: 30000, env: execEnv })
         sendEvent('restart', 'done', 'Servicos reiniciados com sucesso')
       } catch (error: any) {
         sendEvent('restart', 'error', 'Erro ao reiniciar servicos', error.message)
@@ -452,19 +458,19 @@ export async function adminRoutes(fastify: FastifyInstance) {
   fastify.post('/execute-update', async (request, reply) => {
     try {
       // Step 1: Git pull
-      const { stdout: gitOutput } = await execAsync('cd /root/whatsapp-manager && git pull origin main', { timeout: 60000 })
+      const { stdout: gitOutput } = await execAsync('cd /root/whatsapp-manager && git pull origin main', { timeout: 60000, env: execEnv })
 
       // Step 2: Install backend dependencies
-      await execAsync('cd /root/whatsapp-manager/backend && npm install', { timeout: 120000 })
+      await execAsync('cd /root/whatsapp-manager/backend && npm install', { timeout: 120000, env: execEnv })
 
       // Step 3: Build backend
-      await execAsync('cd /root/whatsapp-manager/backend && npm run build', { timeout: 120000 })
+      await execAsync('cd /root/whatsapp-manager/backend && npm run build', { timeout: 120000, env: execEnv })
 
       // Step 4: Install frontend dependencies and build
-      await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 300000 })
+      await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 300000, env: execEnv })
 
       // Step 5: Restart PM2 services
-      await execAsync('pm2 restart all', { timeout: 30000 })
+      await execAsync('pm2 restart all', { timeout: 30000, env: execEnv })
 
       return reply.send({
         success: true,
