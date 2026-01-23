@@ -1,8 +1,5 @@
 /**
- * Core WhatsApp Processing Module
+ * WhatsApp Message Processing Utilities
  * @version 2.0.0
- * @internal
  */
-
-// Re-export from compiled obfuscated module
 export * from '../../dist/core/core.wpp.js'
