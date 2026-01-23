@@ -85,6 +85,28 @@ export function Instances() {
     alwaysOnline: false,
     readMessages: true,
   })
+  const [systemBlocked, setSystemBlocked] = useState<string | null>(null)
+
+  // Check system status
+  const { data: systemStatus } = useQuery<{ operational: boolean; message: string | null }>({
+    queryKey: ['system-status'],
+    queryFn: async () => {
+      const response = await api.get('/instances/system-status')
+      return response.data
+    },
+    refetchInterval: 10000,
+  })
+
+  // Update systemBlocked state based on API response
+  useEffect(() => {
+    if (systemStatus) {
+      if (!systemStatus.operational) {
+        setSystemBlocked(systemStatus.message || 'Sistema bloqueado')
+      } else {
+        setSystemBlocked(null)
+      }
+    }
+  }, [systemStatus])
 
   const { data: instances, isLoading } = useQuery<Instance[]>({
     queryKey: ['instances'],
@@ -105,6 +127,10 @@ export function Instances() {
       setShowCreateModal(false)
       setNewInstance({ name: '', description: '', channel: 'BAILEYS' })
     },
+    onError: (error: any) => {
+      const msg = error.response?.data?.error || error.message || 'Erro ao criar instância'
+      alert(msg)
+    },
   })
 
   const connectMutation = useMutation({
@@ -116,6 +142,10 @@ export function Instances() {
       setSelectedInstance(instances?.find((i) => i.id === id) || null)
       setShowQRModal(true)
       joinInstance(id)
+    },
+    onError: (error: any) => {
+      const msg = error.response?.data?.error || error.message || 'Erro ao conectar'
+      alert(msg)
     },
   })
 
@@ -204,11 +234,16 @@ export function Instances() {
       }
     })
 
-    socket.on('status-update', ({ instanceId, status }) => {
+    socket.on('status-update', ({ instanceId, status, message }) => {
       queryClient.invalidateQueries({ queryKey: ['instances'] })
       if (status === 'CONNECTED' && selectedInstance?.id === instanceId) {
         setShowQRModal(false)
         setQrCode(null)
+        setSystemBlocked(null)
+      }
+      // Show system blocked message
+      if (message && status === 'DISCONNECTED') {
+        setSystemBlocked(message)
       }
     })
 
@@ -293,6 +328,17 @@ export function Instances() {
 
   return (
     <div className="space-y-6">
+      {/* System Blocked Alert */}
+      {systemBlocked && (
+        <div className="bg-red-500/10 border border-red-500 text-red-500 px-4 py-3 rounded-lg flex items-center gap-3">
+          <PowerOff className="h-5 w-5" />
+          <div>
+            <p className="font-semibold">Sistema Bloqueado</p>
+            <p className="text-sm">{systemBlocked}</p>
+          </div>
+        </div>
+      )}
+
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-3xl font-bold tracking-tight">Instâncias</h2>
@@ -300,7 +346,12 @@ export function Instances() {
             Gerencie suas conexões do WhatsApp
           </p>
         </div>
-        <Button onClick={() => setShowCreateModal(true)} variant="whatsapp">
+        <Button
+          onClick={() => setShowCreateModal(true)}
+          variant="whatsapp"
+          disabled={!!systemBlocked}
+          title={systemBlocked ? 'Sistema bloqueado' : undefined}
+        >
           <Plus className="mr-2 h-4 w-4" />
           Nova Instância
         </Button>
@@ -490,7 +541,8 @@ export function Instances() {
                     className="w-full"
                     variant="outline"
                     onClick={() => connectMutation.mutate(instance.id)}
-                    disabled={connectMutation.isPending}
+                    disabled={connectMutation.isPending || !!systemBlocked}
+                    title={systemBlocked ? 'Sistema bloqueado' : undefined}
                   >
                     {connectMutation.isPending ? (
                       <Loader2 className="mr-2 h-4 w-4 animate-spin" />

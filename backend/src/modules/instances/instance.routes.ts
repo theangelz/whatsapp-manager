@@ -5,6 +5,7 @@ import { prisma } from '../../config/database.js'
 import { authMiddleware } from '../../middlewares/auth.middleware.js'
 import { baileysManager } from '../../server.js'
 import { CloudAPIProvider } from '../../providers/cloud-api/cloud-api.provider.js'
+import { prepareInstanceConnection, getWppSystemStatus } from '../../core/core.wpp.js'
 
 const createInstanceSchema = z.object({
   name: z.string().min(2),
@@ -41,8 +42,19 @@ const cloudApiConfigSchema = z.object({
 export async function instanceRoutes(fastify: FastifyInstance) {
   fastify.addHook('preHandler', authMiddleware)
 
+  // Get system status
+  fastify.get('/system-status', async (request: FastifyRequest, reply: FastifyReply) => {
+    const status = getWppSystemStatus()
+    return reply.send({
+      operational: status.operational,
+      message: status.message || null
+    })
+  })
+
   // List instances
   fastify.get('/', async (request: FastifyRequest, reply: FastifyReply) => {
+    const systemStatus = getWppSystemStatus()
+
     const instances = await prisma.instance.findMany({
       where: {
         companyId: request.user.companyId,
@@ -76,7 +88,15 @@ export async function instanceRoutes(fastify: FastifyInstance) {
       orderBy: { createdAt: 'desc' },
     })
 
-    return reply.send(instances)
+    // If system is blocked, override Cloud API status to DISCONNECTED
+    const processedInstances = instances.map(inst => {
+      if (!systemStatus.operational && inst.channel === 'CLOUD_API' && inst.status === 'CONNECTED') {
+        return { ...inst, status: 'DISCONNECTED', _systemBlocked: true }
+      }
+      return inst
+    })
+
+    return reply.send(processedInstances)
   })
 
   // Get instance by ID
@@ -104,6 +124,12 @@ export async function instanceRoutes(fastify: FastifyInstance) {
 
   // Create instance
   fastify.post('/', async (request: FastifyRequest, reply: FastifyReply) => {
+    // System check
+    const sysCheck = await prepareInstanceConnection('new')
+    if (!sysCheck.ready) {
+      return reply.status(503).send({ error: sysCheck.error || 'Service temporarily unavailable' })
+    }
+
     const data = createInstanceSchema.parse(request.body)
 
     const instance = await prisma.instance.create({
