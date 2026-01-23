@@ -354,6 +354,38 @@ export async function instanceRoutes(fastify: FastifyInstance) {
     }
   })
 
+  // Restart instance (disconnect and reconnect - generates new QR code)
+  fastify.post('/:id/restart', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const { id } = request.params
+
+    const instance = await prisma.instance.findFirst({
+      where: { id, companyId: request.user.companyId, isActive: true },
+    })
+
+    if (!instance) {
+      return reply.status(404).send({ error: 'Instance not found' })
+    }
+
+    if (instance.channel !== 'BAILEYS') {
+      return reply.status(400).send({ error: 'Only Baileys instances can be restarted' })
+    }
+
+    try {
+      // Disconnect first
+      await baileysManager.disconnectInstance(id)
+
+      // Wait a moment before reconnecting
+      await new Promise(resolve => setTimeout(resolve, 1000))
+
+      // Reconnect (will generate new QR code)
+      await baileysManager.initInstance(id)
+
+      return reply.send({ message: 'Instance restarted. Waiting for new QR code.' })
+    } catch (error: any) {
+      return reply.status(500).send({ error: error.message })
+    }
+  })
+
   // Disconnect instance
   fastify.post('/:id/disconnect', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const { id } = request.params

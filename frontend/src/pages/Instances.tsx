@@ -158,6 +158,19 @@ export function Instances() {
     },
   })
 
+  const restartMutation = useMutation({
+    mutationFn: async (id: string) => {
+      await api.post(`/instances/${id}/restart`)
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['instances'] })
+    },
+    onError: (error: any) => {
+      const msg = error.response?.data?.error || error.message || 'Erro ao reiniciar'
+      alert(msg)
+    },
+  })
+
   const logoutMutation = useMutation({
     mutationFn: async (id: string) => {
       await api.post(`/instances/${id}/logout`)
@@ -401,12 +414,23 @@ export function Instances() {
                     </DropdownMenuTrigger>
                     <DropdownMenuContent align="end">
                       {instance.channel === 'BAILEYS' && ['DISCONNECTED', 'CONNECTING'].includes(instance.status) && (
-                        <DropdownMenuItem
-                          onClick={() => connectMutation.mutate(instance.id)}
-                        >
-                          <Power className="mr-2 h-4 w-4" />
-                          {instance.status === 'CONNECTING' ? 'Reconectar' : 'Conectar'}
-                        </DropdownMenuItem>
+                        <>
+                          <DropdownMenuItem
+                            onClick={() => connectMutation.mutate(instance.id)}
+                          >
+                            <Power className="mr-2 h-4 w-4" />
+                            {instance.status === 'CONNECTING' ? 'Reconectar' : 'Conectar'}
+                          </DropdownMenuItem>
+                          {instance.status === 'CONNECTING' && (
+                            <DropdownMenuItem
+                              onClick={() => restartMutation.mutate(instance.id)}
+                              disabled={restartMutation.isPending}
+                            >
+                              <RefreshCw className={`mr-2 h-4 w-4 ${restartMutation.isPending ? 'animate-spin' : ''}`} />
+                              Reiniciar (novo QR)
+                            </DropdownMenuItem>
+                          )}
+                        </>
                       )}
                       {instance.channel === 'BAILEYS' && instance.status === 'CONNECTED' && (
                         <>
