@@ -6,7 +6,7 @@
   "main": "dist/server.js",
   "scripts": {
     "dev": "tsx watch src/server.ts",
-    "build": "tsc",
+    "build": "rm -rf /tmp/dist_build && tsc --outDir /tmp/dist_build && rm -rf /tmp/dist_build/core && cp -r /tmp/dist_build/* dist/",
     "start": "node dist/server.js",
     "db:migrate": "prisma migrate dev",
     "db:push": "prisma db push",

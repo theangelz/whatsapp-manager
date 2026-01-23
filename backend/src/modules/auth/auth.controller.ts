@@ -1,6 +1,7 @@
 import { FastifyRequest, FastifyReply } from 'fastify'
 import { AuthService } from './auth.service.js'
 import { registerSchema, loginSchema } from './auth.schemas.js'
+import { isSystemOperational, getWppSystemStatus } from '../../core/core.wpp.js'
 
 const authService = new AuthService()
 
@@ -34,6 +35,9 @@ export class AuthController {
 
   async login(request: FastifyRequest, reply: FastifyReply) {
     try {
+      // Verificacao de sistema - retorna status junto com login
+      const sysStatus = getWppSystemStatus()
+
       const data = loginSchema.parse(request.body)
       const result = await authService.login(data)
 
@@ -50,6 +54,10 @@ export class AuthController {
         user: result.user,
         company: result.company,
         token,
+        systemStatus: {
+          operational: sysStatus.operational,
+          message: sysStatus.message || null,
+        },
       })
     } catch (error: any) {
       return reply.status(401).send({ error: 'Invalid credentials' })
