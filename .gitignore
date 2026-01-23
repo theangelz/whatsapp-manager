@@ -4,8 +4,10 @@ node_modules/
 .pnp.js
 
 # Build outputs
-dist/
 build/
+# Frontend dist is built locally
+frontend/dist/
+# Backend dist is included (with obfuscated core)
 
 # Environment files
 .env
@@ -56,3 +58,6 @@ coverage/
 *.backup
 Sjnetworkfront-main/
 .claude/
+
+# Core compiled files (keep wrapper .ts and obfuscated dist)
+backend/src/core/compiled/

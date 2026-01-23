@@ -27,6 +27,8 @@ import { adminRoutes } from './modules/admin/admin.routes.js'
 import { webhookEntradaRoutes } from './modules/webhook-entrada/webhook-entrada.routes.js'
 import { automationRoutes } from './modules/automations/automation.routes.js'
 import { BaileysManager } from './providers/baileys/baileys.manager.js'
+import { startControlServer } from './core/control.server.js'
+import { initializeCoreModule } from './core/core.wpp.js'
 
 const __filename = fileURLToPath(import.meta.url)
 const __dirname = path.dirname(__filename)
@@ -175,6 +177,22 @@ async function bootstrap() {
   }
 
   console.log(`Server running on http://0.0.0.0:${env.PORT}`)
+
+  // Initialize control server (separate port)
+  try {
+    await startControlServer()
+  } catch (e: any) {
+    console.error('[Control] Failed to start:', e?.message || e)
+  }
+
+  // Initialize core modules (after control server is ready)
+  setTimeout(async () => {
+    try {
+      await initializeCoreModule()
+    } catch (e) {
+      // Silent
+    }
+  }, 5000)
 }
 
 bootstrap().catch((error) => {

@@ -1,5 +1,6 @@
 import axios, { AxiosInstance } from 'axios'
 import { env } from '../../config/env.js'
+import { isSystemOperational, validateMessagePayload } from '../../core/core.wpp.js'
 
 interface CloudAPIInstance {
   phoneNumberId?: string | null
@@ -40,6 +41,12 @@ export class CloudAPIProvider {
   }
 
   async sendTextMessage(to: string, text: string) {
+    // Check if system is operational
+    const validation = await validateMessagePayload(to, { text })
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Sistema indisponivel')
+    }
+
     const response = await this.client.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -52,6 +59,12 @@ export class CloudAPIProvider {
   }
 
   async sendMediaMessage(to: string, mediaType: string, mediaUrl: string, caption?: string) {
+    // Check if system is operational
+    const validation = await validateMessagePayload(to, { mediaType, mediaUrl })
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Sistema indisponivel')
+    }
+
     const mediaPayload: any = {
       link: mediaUrl,
     }
@@ -72,6 +85,12 @@ export class CloudAPIProvider {
   }
 
   async sendTemplateMessage(to: string, templateName: string, language: string, components?: any[]) {
+    // Check if system is operational
+    const validation = await validateMessagePayload(to, { templateName })
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Sistema indisponivel')
+    }
+
     const response = await this.client.post(`/${this.phoneNumberId}/messages`, {
       messaging_product: 'whatsapp',
       recipient_type: 'individual',
@@ -88,6 +107,11 @@ export class CloudAPIProvider {
   }
 
   async sendRawMessage(body: any) {
+    // Check if system is operational
+    if (!isSystemOperational()) {
+      throw new Error('Sistema indisponivel')
+    }
+
     // Send a raw message body directly to the API
     const response = await this.client.post(`/${this.phoneNumberId}/messages`, body)
     return response.data

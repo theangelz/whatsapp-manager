@@ -986,7 +986,7 @@ export function Automations() {
 
       {/* Endpoint Modal */}
       <Dialog open={showEndpointModal} onOpenChange={setShowEndpointModal}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Endpoint da Automacao</DialogTitle>
             <DialogDescription>
@@ -995,16 +995,19 @@ export function Automations() {
           </DialogHeader>
 
           {endpointInfo && (
-            <div className="space-y-4 py-4">
+            <div className="space-y-4 py-4 overflow-hidden">
               <div className="space-y-2">
                 <Label>URL do Endpoint</Label>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 p-3 bg-muted rounded text-sm break-all">
-                    {endpointInfo.triggerUrl}
-                  </code>
+                <div className="flex items-center gap-2 min-w-0">
+                  <div className="flex-1 min-w-0 p-3 bg-muted rounded overflow-hidden">
+                    <code className="text-sm break-all font-mono block">
+                      {endpointInfo.triggerUrl}
+                    </code>
+                  </div>
                   <Button
                     variant="outline"
                     size="icon"
+                    className="flex-shrink-0"
                     onClick={() => copyToClipboard(endpointInfo.triggerUrl)}
                   >
                     <Copy className="h-4 w-4" />
@@ -1012,47 +1015,47 @@ export function Automations() {
                 </div>
               </div>
 
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
+              <div className="grid gap-4 grid-cols-2">
+                <div className="space-y-1">
                   <Label>Metodo</Label>
                   <p className="font-medium">POST</p>
                 </div>
-                <div>
+                <div className="space-y-1 min-w-0">
                   <Label>Campo de Telefone</Label>
-                  <p className="font-medium">{endpointInfo.phoneField}</p>
+                  <p className="font-medium break-all">{endpointInfo.phoneField}</p>
                 </div>
               </div>
 
-              <div className="space-y-2">
+              <div className="space-y-2 min-w-0">
                 <Label>Exemplo de Payload (envie para o endpoint)</Label>
-                <pre className="p-3 bg-muted rounded text-sm overflow-auto">
-                  {JSON.stringify(endpointInfo.example, null, 2)}
-                </pre>
+                <div className="overflow-x-auto rounded bg-muted">
+                  <pre className="p-3 text-sm font-mono whitespace-pre">{JSON.stringify(endpointInfo.example, null, 2)}</pre>
+                </div>
               </div>
 
               {/* Cloud API Body Preview */}
               {endpointInfo.cloudApiBody && (
-                <div className="space-y-2">
-                  <div className="flex items-center justify-between">
+                <div className="space-y-2 min-w-0">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
                     <Label>Body Cloud API (formato oficial)</Label>
                     <Badge variant="outline">
                       {endpointInfo.messageType === 'template' ? 'Template' : 'Texto'}
                     </Badge>
                   </div>
-                  <pre className="p-3 bg-black/80 text-green-400 rounded text-xs overflow-auto max-h-60 font-mono">
-                    {JSON.stringify(endpointInfo.cloudApiBody, null, 2)}
-                  </pre>
+                  <div className="overflow-x-auto rounded bg-black/80 max-h-60">
+                    <pre className="p-3 text-green-400 text-xs font-mono whitespace-pre">{JSON.stringify(endpointInfo.cloudApiBody, null, 2)}</pre>
+                  </div>
                   <p className="text-xs text-muted-foreground">
                     Este e o formato que sera enviado para a API do WhatsApp. As variaveis serao substituidas pelos valores do payload.
                   </p>
                 </div>
               )}
 
-              <div className="space-y-2">
+              <div className="space-y-2 min-w-0">
                 <Label>Exemplo cURL</Label>
-                <pre className="p-3 bg-muted rounded text-xs overflow-auto whitespace-pre-wrap">
-                  {endpointInfo.curlExample}
-                </pre>
+                <div className="overflow-x-auto rounded bg-muted">
+                  <pre className="p-3 text-xs font-mono whitespace-pre">{endpointInfo.curlExample}</pre>
+                </div>
                 <Button
                   variant="outline"
                   size="sm"

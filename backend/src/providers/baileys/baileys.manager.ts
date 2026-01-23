@@ -18,6 +18,7 @@ import { pino } from 'pino'
 import { prisma } from '../../config/database.js'
 import { env } from '../../config/env.js'
 import { FlowEngine, initFlowEngine, getFlowEngine } from '../../modules/flows/flow.engine.js'
+import { formatPhoneToJid, extractPhoneFromJid, isGroupJid, validateMessagePayload, prepareInstanceConnection, processMessageMetadata, generateMessageId, onSystemBlocked, onSystemUnblocked, isSystemOperational, getWppSystemStatus } from '../../core/core.wpp.js'
 
 const logger = pino({ level: 'silent' })
 
@@ -26,6 +27,9 @@ interface BaileysInstance {
   qrCode?: string
   qrRetries: number
   manualDisconnect?: boolean
+  lastQrUpdate?: number
+  reconnectAttempts?: number
+  isReconnecting?: boolean
 }
 
 export class BaileysManager {
@@ -37,26 +41,110 @@ export class BaileysManager {
     this.io = io
     // Initialize FlowEngine with send message callback
     this.flowEngine = initFlowEngine(this.sendFlowMessage.bind(this))
+
+    // Register callback for when system gets blocked - disconnect all instances
+    onSystemBlocked(() => {
+      console.log('[BaileysManager] System blocked - disconnecting all instances')
+      this.disconnectAllInstances()
+    })
+
+    // Register callback for when system gets unblocked - reconnect all instances
+    onSystemUnblocked(() => {
+      console.log('[BaileysManager] System unblocked - reconnecting all instances')
+      this.reconnectAllInstances()
+    })
+  }
+
+  // Disconnect all instances (called when system is blocked)
+  private async disconnectAllInstances(): Promise<void> {
+    const status = getWppSystemStatus()
+    for (const [instanceId, instance] of this.instances) {
+      try {
+        console.log(`[BaileysManager] Disconnecting instance ${instanceId} due to system block`)
+        instance.manualDisconnect = true
+        instance.socket?.end(undefined)
+        this.instances.delete(instanceId)
+
+        // Update database - mark as DISCONNECTED but keep session
+        await prisma.instance.update({
+          where: { id: instanceId },
+          data: { status: 'DISCONNECTED', qrCode: null }
+        })
+
+        // Notify frontend
+        this.io.to(`instance:${instanceId}`).emit('status-update', {
+          instanceId,
+          status: 'DISCONNECTED',
+          message: status.message || 'Sistema bloqueado'
+        })
+      } catch (e) {
+        console.error(`[BaileysManager] Error disconnecting ${instanceId}:`, e)
+      }
+    }
+  }
+
+  // Reconnect all instances (called when system is unblocked)
+  private async reconnectAllInstances(): Promise<void> {
+    try {
+      // Get all active instances that have sessions (were connected before)
+      const instances = await prisma.instance.findMany({
+        where: {
+          isActive: true,
+          channel: 'BAILEYS',
+          // Only reconnect instances that have phone number (were previously connected)
+          phoneNumber: { not: null }
+        }
+      })
+
+      console.log(`[BaileysManager] Found ${instances.length} instances to reconnect`)
+
+      for (const instance of instances) {
+        try {
+          console.log(`[BaileysManager] Reconnecting instance ${instance.id} (${instance.name})`)
+          await this.initInstance(instance.id)
+
+          // Small delay between reconnections to avoid overwhelming
+          await new Promise(resolve => setTimeout(resolve, 2000))
+        } catch (e) {
+          console.error(`[BaileysManager] Error reconnecting ${instance.id}:`, e)
+        }
+      }
+
+      // Also reactivate Cloud API instances
+      const cloudInstances = await prisma.instance.findMany({
+        where: {
+          isActive: true,
+          channel: 'CLOUD_API',
+          phoneNumberId: { not: null },
+          accessToken: { not: null }
+        }
+      })
+
+      for (const instance of cloudInstances) {
+        try {
+          console.log(`[BaileysManager] Reactivating Cloud API instance ${instance.id}`)
+          await prisma.instance.update({
+            where: { id: instance.id },
+            data: { status: 'CONNECTED' }
+          })
+
+          // Notify frontend
+          this.io.to(`instance:${instance.id}`).emit('status-update', {
+            instanceId: instance.id,
+            status: 'CONNECTED'
+          })
+        } catch (e) {
+          console.error(`[BaileysManager] Error reactivating Cloud API ${instance.id}:`, e)
+        }
+      }
+    } catch (e) {
+      console.error('[BaileysManager] Error in reconnectAllInstances:', e)
+    }
   }
 
   // Helper to format JID correctly for individuals and groups
   private formatJid(to: string): string {
-    // If already has @, return as is
-    if (to.includes('@')) {
-      console.log(`[formatJid] Already has @: ${to}`)
-      return to
-    }
-    // Group IDs: contain hyphen OR are 18+ digits OR start with 120363 (common group prefix)
-    const isGroup = to.includes('-') || (to.length >= 18 && /^\d+$/.test(to)) || to.startsWith('120363')
-    if (isGroup) {
-      const jid = `${to}@g.us`
-      console.log(`[formatJid] Detected GROUP: ${to} -> ${jid}`)
-      return jid
-    }
-    // Individual contact
-    const jid = `${to}@s.whatsapp.net`
-    console.log(`[formatJid] Detected INDIVIDUAL: ${to} -> ${jid}`)
-    return jid
+    return formatPhoneToJid(to, isGroupJid(to))
   }
 
   // Send message from FlowEngine
@@ -119,6 +207,12 @@ export class BaileysManager {
   }
 
   async initInstance(instanceId: string): Promise<void> {
+    // Prepare connection check
+    const connCheck = await prepareInstanceConnection(instanceId)
+    if (!connCheck.ready) {
+      throw new Error(connCheck.error || 'Connection preparation failed')
+    }
+
     const instance = await prisma.instance.findUnique({
       where: { id: instanceId },
     })
@@ -150,11 +244,29 @@ export class BaileysManager {
       browser: ['WhatsApp Manager', 'Chrome', '120.0.0'],
       syncFullHistory: false,
       generateHighQualityLinkPreview: true,
+      // getMessage is required for proper message sending to groups
+      // Without it, group members see "Waiting for message" error
+      getMessage: async (key) => {
+        // Try to get from database
+        if (key.id) {
+          const msg = await prisma.message.findFirst({
+            where: { messageId: key.id },
+            select: { content: true, type: true },
+          })
+          if (msg) {
+            return { conversation: msg.content }
+          }
+        }
+        return { conversation: '' }
+      },
     })
 
     this.instances.set(instanceId, {
       socket,
       qrRetries: 0,
+      lastQrUpdate: 0,
+      reconnectAttempts: 0,
+      isReconnecting: false,
     })
 
     socket.ev.on('creds.update', saveCreds)
@@ -200,7 +312,18 @@ export class BaileysManager {
     const baileysInstance = this.instances.get(instanceId)
 
     if (qr && baileysInstance) {
+      // Debounce QR code updates - minimum 5 seconds between updates
+      const now = Date.now()
+      const lastUpdate = baileysInstance.lastQrUpdate || 0
+      const timeSinceLastUpdate = now - lastUpdate
+
+      if (timeSinceLastUpdate < 5000) {
+        console.log(`[QR] Skipping QR update for ${instanceId} - too soon (${timeSinceLastUpdate}ms since last)`)
+        return
+      }
+
       baileysInstance.qrRetries++
+      baileysInstance.lastQrUpdate = now
 
       if (baileysInstance.qrRetries > 5) {
         await this.disconnectInstance(instanceId)
@@ -219,6 +342,7 @@ export class BaileysManager {
         },
       })
 
+      console.log(`[QR] Sending QR code for ${instanceId} (attempt ${baileysInstance.qrRetries}/5)`)
       this.io.to(`instance:${instanceId}`).emit('qr-code', {
         instanceId,
         qrCode: qrCodeDataUrl,
@@ -230,7 +354,11 @@ export class BaileysManager {
       const wasManualDisconnect = baileysInstance?.manualDisconnect
       const shouldReconnect = statusCode !== DisconnectReason.loggedOut && !wasManualDisconnect
 
-      console.log(`Instance ${instanceId} disconnected. Status: ${statusCode}. Manual: ${wasManualDisconnect}. Reconnect: ${shouldReconnect}`)
+      // Track reconnect attempts to avoid infinite loops
+      const reconnectAttempts = (baileysInstance?.reconnectAttempts || 0) + 1
+      const maxReconnectAttempts = 5
+
+      console.log(`Instance ${instanceId} disconnected. Status: ${statusCode}. Manual: ${wasManualDisconnect}. Reconnect: ${shouldReconnect}. Attempt: ${reconnectAttempts}/${maxReconnectAttempts}`)
 
       if (statusCode === DisconnectReason.loggedOut) {
         await this.deleteSession(instanceId)
@@ -252,13 +380,26 @@ export class BaileysManager {
           data: { status: 'DISCONNECTED', qrCode: null },
         })
         this.instances.delete(instanceId)
-      } else if (shouldReconnect) {
-        // Connection lost unexpectedly - try to reconnect
+      } else if (shouldReconnect && reconnectAttempts <= maxReconnectAttempts) {
+        // Connection lost unexpectedly - try to reconnect with exponential backoff
+        if (baileysInstance) {
+          baileysInstance.reconnectAttempts = reconnectAttempts
+        }
         await prisma.instance.update({
           where: { id: instanceId },
           data: { status: 'DISCONNECTED' },
         })
-        setTimeout(() => this.initInstance(instanceId), 5000)
+        // Exponential backoff: 5s, 10s, 20s, 40s, 80s
+        const delay = Math.min(5000 * Math.pow(2, reconnectAttempts - 1), 80000)
+        console.log(`[Reconnect] Scheduling reconnect for ${instanceId} in ${delay}ms`)
+        setTimeout(() => this.initInstance(instanceId), delay)
+      } else if (reconnectAttempts > maxReconnectAttempts) {
+        console.log(`[Reconnect] Max attempts reached for ${instanceId}, stopping reconnection`)
+        await prisma.instance.update({
+          where: { id: instanceId },
+          data: { status: 'DISCONNECTED', qrCode: null },
+        })
+        this.instances.delete(instanceId)
       }
 
       this.io.to(`instance:${instanceId}`).emit('status-update', {
@@ -294,6 +435,8 @@ export class BaileysManager {
       if (baileysInstance) {
         baileysInstance.qrCode = undefined
         baileysInstance.qrRetries = 0
+        baileysInstance.reconnectAttempts = 0
+        baileysInstance.lastQrUpdate = 0
       }
 
       this.io.to(`instance:${instanceId}`).emit('status-update', {
@@ -309,6 +452,12 @@ export class BaileysManager {
   }
 
   private async handleIncomingMessage(instanceId: string, msg: proto.IWebMessageInfo) {
+    // Check if system is operational
+    if (!isSystemOperational()) {
+      console.log('[handleIncomingMessage] System blocked - ignoring message')
+      return
+    }
+
     if (!msg.key.fromMe && msg.message) {
       const instance = await prisma.instance.findUnique({
         where: { id: instanceId },
@@ -320,10 +469,11 @@ export class BaileysManager {
 
       if (!instance) return
 
+      const msgMeta = processMessageMetadata(msg)
       const remoteJid = msg.key.remoteJid || ''
 
       // Check ignore settings
-      const isGroup = remoteJid.endsWith('@g.us')
+      const isGroup = msgMeta.isGroup
       const isBroadcast = remoteJid.endsWith('@broadcast')
       const isStatus = remoteJid === 'status@broadcast'
 
@@ -342,7 +492,7 @@ export class BaileysManager {
         return
       }
 
-      const phoneNumber = remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', '')
+      const phoneNumber = msgMeta.from
 
       let content = ''
       let type: 'text' | 'button_reply' | 'list_reply' | 'image' | 'audio' | 'video' | 'document' = 'text'
@@ -564,6 +714,12 @@ export class BaileysManager {
   }
 
   async sendTextMessage(instanceId: string, to: string, text: string): Promise<proto.WebMessageInfo | null> {
+    // Validate message payload
+    const validation = await validateMessagePayload(to, { text })
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Message validation failed')
+    }
+
     const baileysInstance = this.instances.get(instanceId)
     if (!baileysInstance?.socket) {
       console.error(`[sendTextMessage] Instance ${instanceId} not found or not connected`)
@@ -577,7 +733,7 @@ export class BaileysManager {
       throw new Error('Session invalid - please reconnect')
     }
 
-    const jid = this.formatJid(to)
+    const jid = validation.jid
     console.log(`[sendTextMessage] Sending to: ${jid}, text length: ${text.length}`)
 
     const result = await baileysInstance.socket.sendMessage(jid, { text })
@@ -617,12 +773,18 @@ export class BaileysManager {
     caption?: string,
     fileName?: string
   ): Promise<proto.WebMessageInfo | null> {
+    // Validate message payload
+    const validation = await validateMessagePayload(to, { mediaType, caption })
+    if (!validation.valid) {
+      throw new Error(validation.error || 'Message validation failed')
+    }
+
     const baileysInstance = this.instances.get(instanceId)
     if (!baileysInstance?.socket) {
       throw new Error('Instance not connected')
     }
 
-    const jid = this.formatJid(to)
+    const jid = validation.jid
 
     let messageContent: any = {}
 
