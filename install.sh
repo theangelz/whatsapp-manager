@@ -222,10 +222,10 @@ npm run build
 npx prisma generate
 log_success "Backend buildado"
 
-# Instalar dependencias do frontend
+# Instalar dependencias do frontend (inclui dev para typescript)
 log_info "Instalando dependencias do frontend..."
 cd $APP_DIR/frontend
-npm install
+npm install --include=dev
 log_success "Dependencias do frontend instaladas"
 
 # Buildar frontend
