@@ -17,7 +17,7 @@ const execEnv = {
 }
 
 // Current version
-const CURRENT_VERSION = '2.1.10'
+const CURRENT_VERSION = '2.1.9'
 const GITHUB_REPO = 'theangelz/whatsapp-manager'
 
 // Lista de emails de super admin
@@ -399,10 +399,11 @@ export async function adminRoutes(fastify: FastifyInstance) {
     reply.raw.write(':ping\n\n')
 
     try {
-      // Step 1: Git pull
+      // Step 1: Git fetch and reset to get latest code (force overwrite local changes)
       sendEvent('git', 'running', 'Baixando atualizacoes do repositorio...')
       try {
-        const { stdout: gitOutput } = await execAsync('cd /root/whatsapp-manager && git pull origin main', { timeout: 60000, env: execEnv })
+        await execAsync('cd /root/whatsapp-manager && git fetch origin main', { timeout: 60000, env: execEnv })
+        const { stdout: gitOutput } = await execAsync('cd /root/whatsapp-manager && git reset --hard origin/main', { timeout: 60000, env: execEnv })
         sendEvent('git', 'done', 'Codigo atualizado com sucesso', gitOutput)
       } catch (error: any) {
         sendEvent('git', 'error', 'Erro ao baixar atualizacoes', error.message)
