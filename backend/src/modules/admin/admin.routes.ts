@@ -377,18 +377,26 @@ export async function adminRoutes(fastify: FastifyInstance) {
   // Execute update with SSE (Server-Sent Events) for real-time progress
   // Auth is handled by authMiddleware which accepts token via query parameter for SSE connections
   fastify.get('/execute-update-stream', async (request, reply) => {
-    // Set headers for SSE
+    // Set headers for SSE - include headers to prevent nginx buffering
     reply.raw.writeHead(200, {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-cache, no-transform',
       'Connection': 'keep-alive',
       'Access-Control-Allow-Origin': '*',
+      'X-Accel-Buffering': 'no',  // Disable nginx buffering
     })
 
     const sendEvent = (step: string, status: 'running' | 'done' | 'error', message: string, details?: string) => {
       const data = JSON.stringify({ step, status, message, details })
       reply.raw.write(`data: ${data}\n\n`)
+      // Force flush to ensure data is sent immediately
+      if (typeof (reply.raw as any).flush === 'function') {
+        (reply.raw as any).flush()
+      }
     }
+
+    // Send initial ping to establish connection
+    reply.raw.write(':ping\n\n')
 
     try {
       // Step 1: Git pull
@@ -424,10 +432,22 @@ export async function adminRoutes(fastify: FastifyInstance) {
         return
       }
 
-      // Step 4: Install frontend dependencies and build (include dev for typescript)
-      sendEvent('frontend', 'running', 'Instalando dependencias e compilando frontend...')
+      // Step 4: Install frontend dependencies
+      sendEvent('frontend', 'running', 'Instalando dependencias do frontend...')
       try {
-        await execAsync('cd /root/whatsapp-manager/frontend && npm install --include=dev && npm run build', { timeout: 300000, env: execEnv })
+        await execAsync('cd /root/whatsapp-manager/frontend && npm install --include=dev', { timeout: 180000, env: execEnv })
+        // Send keepalive ping
+        reply.raw.write(':ping\n\n')
+      } catch (error: any) {
+        sendEvent('frontend', 'error', 'Erro ao instalar dependencias do frontend', error.message)
+        reply.raw.end()
+        return
+      }
+
+      // Step 4b: Build frontend (separate to avoid timeout)
+      sendEvent('frontend', 'running', 'Compilando frontend (pode demorar)...')
+      try {
+        await execAsync('cd /root/whatsapp-manager/frontend && npm run build', { timeout: 600000, env: execEnv })
         sendEvent('frontend', 'done', 'Frontend compilado com sucesso')
       } catch (error: any) {
         sendEvent('frontend', 'error', 'Erro ao compilar frontend', error.message)
