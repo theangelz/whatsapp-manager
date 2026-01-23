@@ -2,6 +2,8 @@ import axios, { AxiosInstance } from 'axios'
 import { env } from '../../config/env.js'
 import { isSystemOperational, validateMessagePayload } from '../../core/core.wpp.js'
 
+// Meta Cloud API Provider v2.1.4 - Improved error handling
+
 interface CloudAPIInstance {
   phoneNumberId?: string | null
   accessToken?: string | null
