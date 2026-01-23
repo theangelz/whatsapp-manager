@@ -9,10 +9,11 @@ import { isSystemOperational } from '../../core/core.wpp.js'
 
 const execAsync = promisify(exec)
 
-// Environment for exec commands - ensure PATH includes common locations
+// Environment for exec commands - ensure PATH includes common locations and dev deps install
 const execEnv = {
   ...process.env,
-  PATH: `/root/.nvm/versions/node/v20.20.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${process.env.PATH || ''}`
+  PATH: `/root/.nvm/versions/node/v20.20.0/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:${process.env.PATH || ''}`,
+  NODE_ENV: 'development'  // Force dev to ensure devDependencies are installed
 }
 
 // Current version
