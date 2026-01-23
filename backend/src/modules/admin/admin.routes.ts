@@ -10,7 +10,7 @@ import { isSystemOperational } from '../../core/core.wpp.js'
 const execAsync = promisify(exec)
 
 // Current version
-const CURRENT_VERSION = '2.1.4'
+const CURRENT_VERSION = '2.1.5'
 const GITHUB_REPO = 'theangelz/whatsapp-manager'
 
 // Lista de emails de super admin
@@ -367,7 +367,88 @@ export async function adminRoutes(fastify: FastifyInstance) {
     }
   })
 
-  // Execute update
+  // Execute update with SSE (Server-Sent Events) for real-time progress
+  // Auth is handled by authMiddleware which accepts token via query parameter for SSE connections
+  fastify.get('/execute-update-stream', async (request, reply) => {
+    // Set headers for SSE
+    reply.raw.writeHead(200, {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+      'Access-Control-Allow-Origin': '*',
+    })
+
+    const sendEvent = (step: string, status: 'running' | 'done' | 'error', message: string, details?: string) => {
+      const data = JSON.stringify({ step, status, message, details })
+      reply.raw.write(`data: ${data}\n\n`)
+    }
+
+    try {
+      // Step 1: Git pull
+      sendEvent('git', 'running', 'Baixando atualizacoes do repositorio...')
+      try {
+        const { stdout: gitOutput } = await execAsync('cd /root/whatsapp-manager && git pull origin main', { timeout: 60000 })
+        sendEvent('git', 'done', 'Codigo atualizado com sucesso', gitOutput)
+      } catch (error: any) {
+        sendEvent('git', 'error', 'Erro ao baixar atualizacoes', error.message)
+        reply.raw.end()
+        return
+      }
+
+      // Step 2: Install backend dependencies
+      sendEvent('backend', 'running', 'Instalando dependencias do backend...')
+      try {
+        await execAsync('cd /root/whatsapp-manager/backend && npm install', { timeout: 120000 })
+        sendEvent('backend', 'done', 'Dependencias do backend instaladas')
+      } catch (error: any) {
+        sendEvent('backend', 'error', 'Erro ao instalar dependencias do backend', error.message)
+        reply.raw.end()
+        return
+      }
+
+      // Step 3: Build backend
+      sendEvent('build-backend', 'running', 'Compilando backend...')
+      try {
+        await execAsync('cd /root/whatsapp-manager/backend && npm run build', { timeout: 120000 })
+        sendEvent('build-backend', 'done', 'Backend compilado com sucesso')
+      } catch (error: any) {
+        sendEvent('build-backend', 'error', 'Erro ao compilar backend', error.message)
+        reply.raw.end()
+        return
+      }
+
+      // Step 4: Install frontend dependencies and build
+      sendEvent('frontend', 'running', 'Instalando dependencias e compilando frontend...')
+      try {
+        await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 300000 })
+        sendEvent('frontend', 'done', 'Frontend compilado com sucesso')
+      } catch (error: any) {
+        sendEvent('frontend', 'error', 'Erro ao compilar frontend', error.message)
+        reply.raw.end()
+        return
+      }
+
+      // Step 5: Restart PM2 services
+      sendEvent('restart', 'running', 'Reiniciando servicos...')
+      try {
+        await execAsync('pm2 restart all', { timeout: 30000 })
+        sendEvent('restart', 'done', 'Servicos reiniciados com sucesso')
+      } catch (error: any) {
+        sendEvent('restart', 'error', 'Erro ao reiniciar servicos', error.message)
+        reply.raw.end()
+        return
+      }
+
+      // Complete
+      sendEvent('complete', 'done', 'Atualizacao concluida com sucesso!')
+      reply.raw.end()
+    } catch (error: any) {
+      sendEvent('error', 'error', 'Erro inesperado na atualizacao', error.message)
+      reply.raw.end()
+    }
+  })
+
+  // Keep the old endpoint for backwards compatibility
   fastify.post('/execute-update', async (request, reply) => {
     try {
       // Step 1: Git pull
@@ -376,10 +457,13 @@ export async function adminRoutes(fastify: FastifyInstance) {
       // Step 2: Install backend dependencies
       await execAsync('cd /root/whatsapp-manager/backend && npm install', { timeout: 120000 })
 
-      // Step 3: Install frontend dependencies and build
-      await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 180000 })
+      // Step 3: Build backend
+      await execAsync('cd /root/whatsapp-manager/backend && npm run build', { timeout: 120000 })
 
-      // Step 4: Restart PM2 services
+      // Step 4: Install frontend dependencies and build
+      await execAsync('cd /root/whatsapp-manager/frontend && npm install && npm run build', { timeout: 300000 })
+
+      // Step 5: Restart PM2 services
       await execAsync('pm2 restart all', { timeout: 30000 })
 
       return reply.send({

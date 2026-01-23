@@ -1,6 +1,6 @@
-import { useState } from 'react'
-import { Moon, Sun, Bell, User, Download, Loader2, CheckCircle, XCircle, GitBranch, Package, Hammer, RotateCcw } from 'lucide-react'
-import { useQuery, useMutation } from '@tanstack/react-query'
+import { useState, useRef } from 'react'
+import { Moon, Sun, Bell, User, Download, Loader2, CheckCircle, XCircle, GitBranch, Package, Hammer, RotateCcw, Code } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
 import { Button } from '@/components/ui/button'
 import {
   DropdownMenu,
@@ -19,28 +19,41 @@ import {
 } from '@/components/ui/dialog'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Badge } from '@/components/ui/badge'
+import { Progress } from '@/components/ui/progress'
 import { useAuthStore } from '@/stores/auth.store'
 import { useThemeStore } from '@/stores/theme.store'
 import api from '@/services/api'
 
-type UpdateStep = 'idle' | 'git' | 'backend' | 'frontend' | 'restart' | 'done' | 'error'
+type UpdateStep = 'idle' | 'git' | 'backend' | 'build-backend' | 'frontend' | 'restart' | 'complete' | 'error'
 
-const stepLabels: Record<UpdateStep, string> = {
-  idle: 'Preparando...',
-  git: 'Baixando atualizações (git pull)...',
-  backend: 'Instalando dependências do backend...',
-  frontend: 'Compilando frontend...',
-  restart: 'Reiniciando serviços...',
-  done: 'Atualização concluída!',
-  error: 'Erro na atualização',
+interface StepInfo {
+  label: string
+  icon: React.ReactNode
 }
+
+const stepConfig: Record<UpdateStep, StepInfo> = {
+  idle: { label: 'Preparando...', icon: <Loader2 className="h-5 w-5 animate-spin" /> },
+  git: { label: 'Baixando atualizações (git pull)', icon: <GitBranch className="h-5 w-5" /> },
+  backend: { label: 'Instalando dependências do backend', icon: <Package className="h-5 w-5" /> },
+  'build-backend': { label: 'Compilando backend', icon: <Code className="h-5 w-5" /> },
+  frontend: { label: 'Compilando frontend', icon: <Hammer className="h-5 w-5" /> },
+  restart: { label: 'Reiniciando serviços', icon: <RotateCcw className="h-5 w-5" /> },
+  complete: { label: 'Atualização concluída!', icon: <CheckCircle className="h-5 w-5 text-green-500" /> },
+  error: { label: 'Erro na atualização', icon: <XCircle className="h-5 w-5 text-red-500" /> },
+}
+
+const stepOrder: UpdateStep[] = ['git', 'backend', 'build-backend', 'frontend', 'restart']
 
 export function Header() {
   const { user, logout } = useAuthStore()
   const { theme, setTheme } = useThemeStore()
   const [showUpdateModal, setShowUpdateModal] = useState(false)
   const [currentStep, setCurrentStep] = useState<UpdateStep>('idle')
+  const [completedSteps, setCompletedSteps] = useState<Set<UpdateStep>>(new Set())
   const [errorMessage, setErrorMessage] = useState('')
+  const [stepDetails, setStepDetails] = useState<string>('')
+  const [isUpdating, setIsUpdating] = useState(false)
+  const eventSourceRef = useRef<EventSource | null>(null)
 
   const isAdmin = user?.email === 'admin@whatsapp' || user?.email === 'admin@whatsapp.local'
 
@@ -57,43 +70,75 @@ export function Header() {
     retry: false,
   })
 
-  // Execute update mutation
-  const updateMutation = useMutation({
-    mutationFn: async () => {
-      setCurrentStep('git')
-      const response = await api.post('/admin/execute-update')
-      return response.data
-    },
-    onSuccess: () => {
-      setCurrentStep('done')
-      setTimeout(() => {
-        window.location.reload()
-      }, 2000)
-    },
-    onError: (error: any) => {
-      setCurrentStep('error')
-      setErrorMessage(error.response?.data?.details || error.message || 'Erro desconhecido')
-    },
-  })
-
   const handleUpdate = () => {
     setShowUpdateModal(true)
     setCurrentStep('idle')
+    setCompletedSteps(new Set())
     setErrorMessage('')
+    setStepDetails('')
+    setIsUpdating(true)
 
-    // Simulate step progression for better UX
-    setTimeout(() => setCurrentStep('git'), 500)
-    setTimeout(() => {
-      if (currentStep !== 'error') setCurrentStep('backend')
-    }, 3000)
-    setTimeout(() => {
-      if (currentStep !== 'error') setCurrentStep('frontend')
-    }, 8000)
-    setTimeout(() => {
-      if (currentStep !== 'error') setCurrentStep('restart')
-    }, 15000)
+    // Get the base URL from the API config
+    const baseUrl = api.defaults.baseURL || ''
+    const token = localStorage.getItem('token')
 
-    updateMutation.mutate()
+    // Close any existing connection
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+    }
+
+    // Create EventSource for SSE
+    const eventSource = new EventSource(`${baseUrl}/admin/execute-update-stream?token=${token}`)
+    eventSourceRef.current = eventSource
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        const { step, status, message, details } = data
+
+        if (status === 'running') {
+          setCurrentStep(step as UpdateStep)
+          setStepDetails(message)
+        } else if (status === 'done') {
+          if (step === 'complete') {
+            setCurrentStep('complete')
+            setIsUpdating(false)
+            eventSource.close()
+            // Reload after success
+            setTimeout(() => {
+              window.location.reload()
+            }, 2000)
+          } else {
+            setCompletedSteps(prev => new Set([...prev, step as UpdateStep]))
+            if (details) setStepDetails(details)
+          }
+        } else if (status === 'error') {
+          setCurrentStep('error')
+          setErrorMessage(details || message)
+          setIsUpdating(false)
+          eventSource.close()
+        }
+      } catch (e) {
+        console.error('Error parsing SSE data:', e)
+      }
+    }
+
+    eventSource.onerror = () => {
+      if (currentStep !== 'complete' && currentStep !== 'error') {
+        setCurrentStep('error')
+        setErrorMessage('Conexão perdida com o servidor. Verifique se a atualização foi concluída.')
+        setIsUpdating(false)
+      }
+      eventSource.close()
+    }
+  }
+
+  const handleCloseModal = () => {
+    if (eventSourceRef.current) {
+      eventSourceRef.current.close()
+    }
+    setShowUpdateModal(false)
+    setIsUpdating(false)
   }
 
   const toggleTheme = () => {
@@ -104,23 +149,17 @@ export function Header() {
     }
   }
 
-  const getStepIcon = (step: UpdateStep) => {
-    switch (step) {
-      case 'git':
-        return <GitBranch className="h-5 w-5" />
-      case 'backend':
-        return <Package className="h-5 w-5" />
-      case 'frontend':
-        return <Hammer className="h-5 w-5" />
-      case 'restart':
-        return <RotateCcw className="h-5 w-5" />
-      case 'done':
-        return <CheckCircle className="h-5 w-5 text-green-500" />
-      case 'error':
-        return <XCircle className="h-5 w-5 text-red-500" />
-      default:
-        return <Loader2 className="h-5 w-5 animate-spin" />
+  // Calculate progress percentage
+  const getProgressPercentage = () => {
+    if (currentStep === 'complete') return 100
+    if (currentStep === 'error') return 0
+    const completedCount = completedSteps.size
+    const currentIndex = stepOrder.indexOf(currentStep)
+    const totalSteps = stepOrder.length
+    if (currentIndex >= 0) {
+      return Math.round(((completedCount + 0.5) / totalSteps) * 100)
     }
+    return Math.round((completedCount / totalSteps) * 100)
   }
 
   return (
@@ -147,10 +186,10 @@ export function Header() {
               size="icon"
               className="relative"
               onClick={handleUpdate}
-              disabled={updateMutation.isPending}
+              disabled={isUpdating}
               title={`Atualizar para v${updateInfo.latestVersion}`}
             >
-              {updateMutation.isPending ? (
+              {isUpdating ? (
                 <Loader2 className="h-5 w-5 animate-spin" />
               ) : (
                 <>
@@ -210,8 +249,8 @@ export function Header() {
       </header>
 
       {/* Update Modal */}
-      <Dialog open={showUpdateModal} onOpenChange={setShowUpdateModal}>
-        <DialogContent className="sm:max-w-md">
+      <Dialog open={showUpdateModal} onOpenChange={handleCloseModal}>
+        <DialogContent className="sm:max-w-lg">
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Download className="h-5 w-5" />
@@ -223,77 +262,106 @@ export function Header() {
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            {/* Progress Bar */}
+            {currentStep !== 'idle' && currentStep !== 'error' && (
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Progresso</span>
+                  <span className="font-medium">{getProgressPercentage()}%</span>
+                </div>
+                <Progress value={getProgressPercentage()} className="h-2" />
+              </div>
+            )}
+
             {/* Progress Steps */}
-            <div className="space-y-3">
-              {(['git', 'backend', 'frontend', 'restart'] as UpdateStep[]).map((step, index) => {
-                const steps: UpdateStep[] = ['git', 'backend', 'frontend', 'restart']
-                const currentIndex = steps.indexOf(currentStep)
-                const stepIndex = index
+            <div className="space-y-2">
+              {stepOrder.map((step) => {
+                const config = stepConfig[step]
                 const isActive = currentStep === step
-                const isCompleted = currentIndex > stepIndex || currentStep === 'done'
-                const isPending = currentIndex < stepIndex && currentStep !== 'error'
+                const isCompleted = completedSteps.has(step)
+                const currentIndex = stepOrder.indexOf(currentStep)
+                const stepIndex = stepOrder.indexOf(step)
+                const isErrored = currentStep === 'error' && stepIndex >= currentIndex
 
                 return (
                   <div
                     key={step}
                     className={`flex items-center gap-3 p-3 rounded-lg transition-all ${
                       isActive ? 'bg-primary/10 border border-primary' :
-                      isCompleted ? 'bg-green-500/10 border border-green-500' :
-                      currentStep === 'error' && stepIndex >= currentIndex ? 'bg-red-500/10 border border-red-500' :
-                      'bg-muted/50 border border-transparent'
+                      isCompleted ? 'bg-green-500/10 border border-green-500/50' :
+                      isErrored ? 'bg-red-500/10 border border-red-500/50' :
+                      'bg-muted/30 border border-transparent'
                     }`}
                   >
-                    {isActive && currentStep !== 'done' && currentStep !== 'error' ? (
-                      <Loader2 className="h-5 w-5 animate-spin text-primary" />
-                    ) : isCompleted ? (
-                      <CheckCircle className="h-5 w-5 text-green-500" />
-                    ) : currentStep === 'error' && stepIndex >= currentIndex ? (
-                      <XCircle className="h-5 w-5 text-red-500" />
-                    ) : (
-                      <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30" />
-                    )}
-                    <span className={`text-sm ${isActive ? 'font-medium' : ''}`}>
-                      {stepLabels[step]}
-                    </span>
+                    <div className="flex-shrink-0">
+                      {isActive && !isCompleted ? (
+                        <Loader2 className="h-5 w-5 animate-spin text-primary" />
+                      ) : isCompleted ? (
+                        <CheckCircle className="h-5 w-5 text-green-500" />
+                      ) : isErrored ? (
+                        <XCircle className="h-5 w-5 text-red-500" />
+                      ) : (
+                        <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30" />
+                      )}
+                    </div>
+                    <div className="flex-grow min-w-0">
+                      <span className={`text-sm ${isActive ? 'font-medium text-primary' : isCompleted ? 'text-green-600' : ''}`}>
+                        {config.label}
+                      </span>
+                      {isActive && stepDetails && (
+                        <p className="text-xs text-muted-foreground truncate mt-0.5">{stepDetails}</p>
+                      )}
+                    </div>
+                    <div className="flex-shrink-0 text-muted-foreground">
+                      {config.icon}
+                    </div>
                   </div>
                 )
               })}
             </div>
 
             {/* Success Message */}
-            {currentStep === 'done' && (
-              <div className="p-4 bg-green-500/10 border border-green-500 rounded-lg text-center">
-                <CheckCircle className="h-8 w-8 text-green-500 mx-auto mb-2" />
-                <p className="font-medium text-green-500">Atualização concluída!</p>
-                <p className="text-sm text-muted-foreground">Recarregando página...</p>
+            {currentStep === 'complete' && (
+              <div className="p-4 bg-green-500/10 border border-green-500 rounded-lg text-center animate-in fade-in duration-300">
+                <CheckCircle className="h-10 w-10 text-green-500 mx-auto mb-2" />
+                <p className="font-medium text-green-600">Atualização concluída com sucesso!</p>
+                <p className="text-sm text-muted-foreground mt-1">Recarregando página em instantes...</p>
               </div>
             )}
 
             {/* Error Message */}
             {currentStep === 'error' && (
-              <div className="p-4 bg-red-500/10 border border-red-500 rounded-lg">
+              <div className="p-4 bg-red-500/10 border border-red-500 rounded-lg animate-in fade-in duration-300">
                 <div className="flex items-center gap-2 text-red-500 mb-2">
                   <XCircle className="h-5 w-5" />
                   <span className="font-medium">Erro na atualização</span>
                 </div>
-                <p className="text-sm text-muted-foreground">{errorMessage}</p>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="mt-3"
-                  onClick={() => setShowUpdateModal(false)}
-                >
-                  Fechar
-                </Button>
+                <p className="text-sm text-muted-foreground break-words">{errorMessage}</p>
+                <div className="flex gap-2 mt-3">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleCloseModal}
+                  >
+                    Fechar
+                  </Button>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={handleUpdate}
+                  >
+                    Tentar novamente
+                  </Button>
+                </div>
               </div>
             )}
 
             {/* Manual Instructions Footer */}
-            <div className="pt-4 border-t text-center">
-              <p className="text-xs text-muted-foreground mb-2">
+            <div className="pt-4 border-t">
+              <p className="text-xs text-muted-foreground mb-2 text-center">
                 Se a atualização automática falhar, execute na VPS:
               </p>
-              <code className="text-xs bg-muted px-2 py-1 rounded block">
+              <code className="text-xs bg-muted px-3 py-2 rounded block font-mono break-all">
                 cd /root/whatsapp-manager && git pull && cd backend && npm i && npm run build && pm2 restart all
               </code>
             </div>
