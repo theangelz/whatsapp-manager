@@ -10,17 +10,13 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5454,
+    port: 3333,
     host: true,
-    proxy: {
-      '/api': {
-        target: 'http://localhost:3333',
-        changeOrigin: true,
-      },
-      '/socket.io': {
-        target: 'http://localhost:3333',
-        ws: true,
-      },
+    allowedHosts: ['evo.sjnetwork.com.br'],
+    hmr: {
+      host: 'evo.sjnetwork.com.br',
+      protocol: 'wss',
+      clientPort: 443,
     },
   },
 })

@@ -5,6 +5,58 @@ import { env } from '../../config/env.js'
 import { authMiddleware } from '../../middlewares/auth.middleware.js'
 
 /**
+ * Extract $Variables from text (e.g., "$Valor: R$ 5,00" -> { valor: "R$ 5,00" })
+ * Also extracts $Template1, $Template2, etc for routing
+ */
+function extractDollarVariables(text: string): Record<string, { value: string; type: string }> {
+  const result: Record<string, { value: string; type: string }> = {}
+
+  // Match patterns like "$Valor: R$ 5,00" or "$Venc: 20/02/2026" or "$DataVenc: 20/02/2026"
+  const regex = /\$(\w+):\s*([^$-]+?)(?=\s*-\s*\$|\s*$)/g
+  let match
+
+  while ((match = regex.exec(text)) !== null) {
+    const varName = match[1].toLowerCase() // valor, venc, datavenc, etc
+    let varValue = match[2].trim()
+
+    // Remove trailing spaces and dashes
+    varValue = varValue.replace(/[-\s]+$/, '').trim()
+
+    result[varName] = { value: varValue, type: 'string' }
+
+    // Create friendly aliases for date fields
+    if (varName === 'venc' || varName === 'datavenc' || varName === 'datavencimento' || varName === 'vencimento') {
+      result['data_vencimento'] = { value: varValue, type: 'string' }
+      result['vencimento'] = { value: varValue, type: 'string' }
+    }
+    if (varName === 'valor') {
+      // Clean value for number operations (remove R$)
+      const cleanValue = varValue.replace(/R\$\s*/, '').trim()
+      result['valor_limpo'] = { value: cleanValue, type: 'string' }
+      result['valor'] = { value: cleanValue, type: 'string' }
+    }
+  }
+
+  // Extract $TemplateX for routing (e.g., $Template1, $Template2)
+  const templateMatch = text.match(/\$Template(\d+)/i)
+  if (templateMatch) {
+    result['template_code'] = { value: `$Template${templateMatch[1]}`, type: 'string' }
+    result['template_number'] = { value: templateMatch[1], type: 'string' }
+  }
+
+  // Also extract name from beginning of message (before first $ or -)
+  const nameMatch = text.match(/^([^$-]+?)(?:\s*-\s*\$|\s*-\s*|$)/)
+  if (nameMatch && nameMatch[1]) {
+    const name = nameMatch[1].trim()
+    if (name && name.length > 2) {
+      result['nome_cliente'] = { value: name, type: 'string' }
+    }
+  }
+
+  return result
+}
+
+/**
  * Extract variables from a JSON payload recursively
  */
 function extractVariables(obj: any, prefix = ''): Record<string, { value: string; type: string }> {
@@ -23,6 +75,12 @@ function extractVariables(obj: any, prefix = ''): Record<string, { value: string
       result[fullKey] = {
         value: String(value),
         type: typeof value,
+      }
+
+      // If it's a string field called "mensagem", extract $Variables from it
+      if ((key === 'mensagem' || key === 'message' || key === 'msg') && typeof value === 'string') {
+        const dollarVars = extractDollarVariables(value)
+        Object.assign(result, dollarVars)
       }
     }
   }
@@ -142,11 +200,13 @@ export async function webhookEntradaRoutes(fastify: FastifyInstance) {
         })
       }
 
-      return reply.status(201).send({
+      // Return 200 OK immediately so the caller knows it was received
+      return reply.status(200).send({
+        status: 'ok',
         success: true,
+        message: 'Webhook received successfully',
         eventId: event.id,
         variablesExtracted: Object.keys(variables).length,
-        variables: Object.keys(variables),
       })
     }
   )

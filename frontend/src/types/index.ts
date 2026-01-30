@@ -28,6 +28,7 @@ export interface Instance {
   wabaId?: string
   phoneNumberId?: string
   accessToken?: string
+  appId?: string          // Meta App ID for upload/templates
   webhookSecret?: string
   // Webhook configuration
   webhookUrl?: string
@@ -276,6 +277,9 @@ export interface Automation {
   }
   variableMapping?: Record<string, string>
   phoneField: string
+  // Roteamento Atlaz
+  templateCode?: string  // $Template1, $Template2, $Template3, etc
+  templateType?: 'FATURA_DIA' | 'DISPARO_LIVRE'  // Tipo para roteamento automático
   totalSent: number
   totalFailed: number
   lastTriggeredAt?: string

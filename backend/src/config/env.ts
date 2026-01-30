@@ -20,7 +20,7 @@ const envSchema = z.object({
   META_BUSINESS_ID: z.string().optional(),
   META_ACCESS_TOKEN: z.string().optional(),
   META_WEBHOOK_VERIFY_TOKEN: z.string().optional(),
-  META_API_VERSION: z.string().default('v18.0'),
+  META_API_VERSION: z.string().default('v24.0'),
 
   TYPEBOT_API_URL: z.string().optional(),
   TYPEBOT_API_KEY: z.string().optional(),

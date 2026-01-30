@@ -69,6 +69,7 @@ export function Instances() {
     wabaId: '',
     phoneNumberId: '',
     accessToken: '',
+    appId: '',
     webhookSecret: '',
     webhookUrl: '',
     webhookEvents: [] as string[],
@@ -198,7 +199,7 @@ export function Instances() {
       queryClient.invalidateQueries({ queryKey: ['instances'] })
       setShowConfigModal(false)
       setConfigInstance(null)
-      setCloudApiConfig({ wabaId: '', phoneNumberId: '', accessToken: '', webhookSecret: '', webhookUrl: '', webhookEvents: [] })
+      setCloudApiConfig({ wabaId: '', phoneNumberId: '', accessToken: '', appId: '', webhookSecret: '', webhookUrl: '', webhookEvents: [] })
     },
   })
 
@@ -284,6 +285,7 @@ export function Instances() {
       wabaId: instance.wabaId || '',
       phoneNumberId: instance.phoneNumberId || '',
       accessToken: instance.accessToken || '',
+      appId: instance.appId || '',
       webhookSecret: instance.webhookSecret || '',
       webhookUrl: instance.webhookUrl || '',
       webhookEvents: instance.webhookEvents || [],
@@ -713,7 +715,7 @@ export function Instances() {
         setShowConfigModal(open)
         if (!open) {
           setConfigInstance(null)
-          setCloudApiConfig({ wabaId: '', phoneNumberId: '', accessToken: '', webhookSecret: '', webhookUrl: '', webhookEvents: [] })
+          setCloudApiConfig({ wabaId: '', phoneNumberId: '', accessToken: '', appId: '', webhookSecret: '', webhookUrl: '', webhookEvents: [] })
         }
       }}>
         <DialogContent className="sm:max-w-lg">
@@ -771,6 +773,21 @@ export function Instances() {
               />
               <p className="text-xs text-muted-foreground">
                 Token de acesso permanente gerado no painel de desenvolvedores da Meta
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="appId">App ID</Label>
+              <Input
+                id="appId"
+                placeholder="123456789012345"
+                value={cloudApiConfig.appId}
+                onChange={(e) =>
+                  setCloudApiConfig({ ...cloudApiConfig, appId: e.target.value })
+                }
+              />
+              <p className="text-xs text-muted-foreground">
+                ID do App Meta (necessário para criar templates com PDF)
               </p>
             </div>
 

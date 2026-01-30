@@ -55,6 +55,21 @@ const sendTemplateSchema = z.object({
   components: z.array(z.any()).optional(),
 })
 
+// Schema para envio de fatura (formato SjnetworkAPI)
+const sendInvoiceSchema = z.object({
+  to: z.string().min(10),
+  templateName: z.string().default('fatura_pagamento'),
+  language: z.string().default('pt_BR'),
+  documentUrl: z.string().url().optional(),
+  documentFilename: z.string().optional(),
+  invoiceNumber: z.string(),
+  customerName: z.string(),
+  amount: z.string(),
+  dueDate: z.string(),
+  pixCode: z.string(),
+  boletoCode: z.string().optional(),
+})
+
 const sendGroupSchema = z.object({
   instanceId: z.string().uuid(),
   groupId: z.string().min(5),
@@ -423,6 +438,48 @@ export async function messageRoutes(fastify: FastifyInstance) {
       } catch (error: any) {
         console.error('Cloud API send-template error:', error)
         return reply.status(500).send({ error: error.message || 'Error sending template message' })
+      }
+    })
+
+    // Send invoice template (formato SjnetworkAPI: PDF + PIX + Boleto)
+    app.post('/api/send-invoice', async (request: FastifyRequest, reply: FastifyReply) => {
+      const data = sendInvoiceSchema.parse(request.body)
+      const instance = request.instance!
+
+      if (instance.channel !== 'CLOUD_API') {
+        return reply.status(400).send({ error: 'Invoice templates are only available for Cloud API instances' })
+      }
+
+      try {
+        const fullInstance = await prisma.instance.findUnique({ where: { id: instance.id } })
+
+        if (!fullInstance) {
+          return reply.status(404).send({ error: 'Instance not found' })
+        }
+
+        if (!fullInstance.phoneNumberId || !fullInstance.accessToken) {
+          return reply.status(400).send({
+            error: 'Cloud API credentials not configured.'
+          })
+        }
+
+        const cloudApi = new CloudAPIProvider(fullInstance)
+        const result = await cloudApi.sendInvoiceTemplate(
+          data.to,
+          data.templateName,
+          data.language,
+          {
+            documentUrl: data.documentUrl,
+            documentFilename: data.documentFilename,
+            bodyParams: [data.invoiceNumber, data.customerName, data.amount, data.dueDate],
+            pixCode: data.pixCode,
+            boletoCode: data.boletoCode,
+          }
+        )
+        return reply.send({ success: true, messageId: result.messages?.[0]?.id })
+      } catch (error: any) {
+        console.error('Cloud API send-invoice error:', error)
+        return reply.status(500).send({ error: error.message || 'Error sending invoice' })
       }
     })
   })

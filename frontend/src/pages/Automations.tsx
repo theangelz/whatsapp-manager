@@ -66,6 +66,8 @@ export function Automations() {
     messageText: '',
     delayBetweenMessages: 3000,
     cloudApiMessageType: 'text' as 'text' | 'template',
+    templateCode: '' as string, // $Template1, $Template2, $Template3
+    templateType: '' as '' | 'FATURA_DIA' | 'DISPARO_LIVRE', // Tipo para roteamento automático
   })
   const [variableMapping, setVariableMapping] = useState<Record<string, string>>({})
   const [editJsonMode, setEditJsonMode] = useState(false)
@@ -164,10 +166,13 @@ export function Automations() {
     // Add header parameters first (order matters for WhatsApp API)
     const headerParams = templateVariables
       .filter(v => v.type === 'header')
-      .map(v => ({
-        type: 'text',
-        text: variableMapping[`header_${v.index}`] ? `{{${variableMapping[`header_${v.index}`]}}}` : `{{variavel_${v.index}}}`
-      }))
+      .map(v => {
+        const mapped = variableMapping[`header_${v.index}`]
+        if (mapped?.startsWith('__fixed__:')) {
+          return { type: 'text', text: mapped.replace('__fixed__:', '') }
+        }
+        return { type: 'text', text: mapped ? `{{${mapped}}}` : `{{variavel_${v.index}}}` }
+      })
 
     if (headerParams.length > 0) {
       body.template.components.push({
@@ -179,15 +184,41 @@ export function Automations() {
     // Add body parameters
     const bodyParams = templateVariables
       .filter(v => v.type === 'body')
-      .map(v => ({
-        type: 'text',
-        text: variableMapping[`body_${v.index}`] ? `{{${variableMapping[`body_${v.index}`]}}}` : `{{variavel_${v.index}}}`
-      }))
+      .map(v => {
+        const mapped = variableMapping[`body_${v.index}`]
+        if (mapped?.startsWith('__fixed__:')) {
+          return { type: 'text', text: mapped.replace('__fixed__:', '') }
+        }
+        return { type: 'text', text: mapped ? `{{${mapped}}}` : `{{variavel_${v.index}}}` }
+      })
 
     if (bodyParams.length > 0) {
       body.template.components.push({
         type: 'body',
         parameters: bodyParams
+      })
+    }
+
+    // Add button parameters (for COPY_CODE buttons like Pix and Boleto)
+    const buttonsComponent = selectedTemplate.components?.find((c: any) => c.type === 'BUTTONS')
+    if (buttonsComponent?.buttons) {
+      buttonsComponent.buttons.forEach((btn: any, index: number) => {
+        const key = `button_${index}`
+        const mapped = variableMapping[key]
+        if (mapped) {
+          let codeValue = ''
+          if (mapped.startsWith('__fixed__:')) {
+            codeValue = mapped.replace('__fixed__:', '')
+          } else {
+            codeValue = `{{${mapped}}}`
+          }
+          body.template.components.push({
+            type: 'button',
+            sub_type: 'copy_code',
+            index: index,
+            parameters: [{ type: 'coupon_code', coupon_code: codeValue }]
+          })
+        }
       })
     }
 
@@ -281,6 +312,8 @@ export function Automations() {
       messageText: '',
       delayBetweenMessages: 3000,
       cloudApiMessageType: 'text',
+      templateCode: '',
+      templateType: '',
     })
     setVariableMapping({})
     setEditJsonMode(false)
@@ -313,6 +346,8 @@ export function Automations() {
       messageText: messageText,
       delayBetweenMessages: automation.delayBetweenMessages,
       cloudApiMessageType: messageType,
+      templateCode: automation.templateCode || '',
+      templateType: automation.templateType || '',
     })
     setVariableMapping(automation.variableMapping || {})
 
@@ -336,6 +371,8 @@ export function Automations() {
       instanceId: formData.instanceId,
       phoneField: formData.phoneField,
       delayBetweenMessages: formData.delayBetweenMessages,
+      templateCode: formData.templateCode || null,
+      templateType: formData.templateType || null,
     }
 
     if (instance?.channel === 'CLOUD_API') {
@@ -443,6 +480,29 @@ export function Automations() {
                 <CardDescription>
                   {automation.instance?.name} ({automation.instance?.channel})
                 </CardDescription>
+                {/* Tags de roteamento */}
+                <div className="flex gap-1 flex-wrap mt-2">
+                  {automation.templateCode && (
+                    <Badge variant="outline" className="text-xs bg-purple-500/10 text-purple-600">
+                      {automation.templateCode}
+                    </Badge>
+                  )}
+                  {automation.templateType === 'FATURA_DIA' && (
+                    <Badge variant="outline" className="text-xs bg-blue-500/10 text-blue-600">
+                      Fatura do Dia
+                    </Badge>
+                  )}
+                  {automation.templateType === 'DISPARO_LIVRE' && (
+                    <Badge variant="outline" className="text-xs bg-green-500/10 text-green-600">
+                      Disparo Livre
+                    </Badge>
+                  )}
+                  {automation.metaTemplateName && (
+                    <Badge variant="outline" className="text-xs bg-orange-500/10 text-orange-600">
+                      Template: {automation.metaTemplateName}
+                    </Badge>
+                  )}
+                </div>
               </CardHeader>
               <CardContent className="space-y-4">
                 {automation.description && (
@@ -539,6 +599,49 @@ export function Automations() {
           </DialogHeader>
 
           <div className="space-y-4 py-4">
+            {/* Botão de pré-configuração Atlaz */}
+            <div className="p-3 border-2 border-dashed border-orange-300 rounded-lg bg-orange-50/50">
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="text-sm font-medium">Configuração Rápida</p>
+                  <p className="text-xs text-muted-foreground">Preenche automaticamente para Atlaz</p>
+                </div>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="bg-orange-100 hover:bg-orange-200 border-orange-300"
+                  onClick={() => {
+                    // Preenche formulário
+                    setFormData({
+                      ...formData,
+                      name: 'Fatura Atlaz ORDER_DETAILS',
+                      description: 'Disparo de fatura com PIX, Boleto e PDF via Atlaz ($Template1)',
+                      cloudApiMessageType: 'template',
+                      metaTemplateName: 'fatura_no_dia',
+                      metaTemplateLanguage: 'pt_BR',
+                      phoneField: 'telefone',
+                      templateCode: '$Template1',
+                      templateType: 'FATURA_DIA',
+                    })
+                    // Preenche variáveis automaticamente
+                    setVariableMapping({
+                      'body_1': 'nome_cliente',
+                      'body_2': 'valor',
+                      'body_3': 'data_vencimento',
+                      'order_pix': 'pix_brcode',
+                      'order_boleto': 'linha_digitavel',
+                      'order_valor': 'valor',
+                      'order_numero': 'numero_cobranca',
+                      'header_document': 'arquivo_url',
+                    })
+                  }}
+                >
+                  <Zap className="h-4 w-4 mr-1" />
+                  Automação Fatura Atlaz ($Template1)
+                </Button>
+              </div>
+            </div>
+
             <div className="grid gap-4 md:grid-cols-2">
               <div className="space-y-2">
                 <Label>Nome *</Label>
@@ -576,6 +679,48 @@ export function Automations() {
                 placeholder="Descricao opcional da automacao"
                 rows={2}
               />
+            </div>
+
+            {/* Roteamento Atlaz - Simplificado */}
+            <div className="space-y-3 p-4 border rounded-lg bg-orange-500/5">
+              <div className="flex items-center justify-between">
+                <h4 className="font-medium flex items-center gap-2">
+                  <Zap className="h-4 w-4" />
+                  Tipo de Disparo (Atlaz)
+                </h4>
+              </div>
+              <div className="space-y-2">
+                <Select
+                  value={formData.templateCode || formData.templateType || 'none'}
+                  onValueChange={(v) => {
+                    if (v === 'none') {
+                      setFormData({ ...formData, templateCode: '', templateType: '' })
+                    } else if (v.startsWith('$Template')) {
+                      setFormData({ ...formData, templateCode: v, templateType: '' })
+                    } else {
+                      setFormData({ ...formData, templateCode: '', templateType: v as any })
+                    }
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione quando usar esta automacao" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Nenhum (usar token direto)</SelectItem>
+                    <SelectItem value="FATURA_DIA">Fatura/Boleto (quando tem arquivo_url)</SelectItem>
+                    <SelectItem value="DISPARO_LIVRE">Mensagem Livre (quando NAO tem arquivo_url)</SelectItem>
+                    <SelectItem value="$Template1">$Template1 (1 dia antes vencimento)</SelectItem>
+                    <SelectItem value="$Template2">$Template2 (no dia do vencimento)</SelectItem>
+                    <SelectItem value="$Template3">$Template3 (apos vencimento)</SelectItem>
+                    <SelectItem value="$Template4">$Template4</SelectItem>
+                    <SelectItem value="$Template5">$Template5</SelectItem>
+                  </SelectContent>
+                </Select>
+                <p className="text-xs text-muted-foreground">
+                  O sistema detecta automaticamente: se a mensagem contiver $TemplateX usa a automacao correspondente,
+                  se tiver arquivo_url usa "Fatura/Boleto", senao usa "Mensagem Livre"
+                </p>
+              </div>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
@@ -831,65 +976,514 @@ export function Automations() {
                       </div>
                     </div>
 
-                    {/* Template Content Preview */}
+                    {/* Template Preview Visual */}
                     {selectedTemplate && (
-                      <div className="space-y-4 mt-4 p-3 bg-muted/50 rounded-lg">
-                        <div>
-                          <Label className="text-sm">Conteudo do Template</Label>
-                          {selectedTemplate.components?.map((comp: any, idx: number) => (
-                            <div key={idx} className="mt-2">
-                              {comp.type === 'HEADER' && comp.text && (
-                                <p className="text-sm font-medium">{comp.text}</p>
-                              )}
-                              {comp.type === 'BODY' && (
-                                <p className="text-sm text-muted-foreground">{comp.text}</p>
-                              )}
-                              {comp.type === 'FOOTER' && (
-                                <p className="text-xs text-muted-foreground mt-1">{comp.text}</p>
-                              )}
-                            </div>
-                          ))}
+                      <div className="space-y-4 mt-4">
+                        <Label className="text-sm font-medium">Pre-visualizacao da Mensagem</Label>
+                        <div className="p-4 bg-[#e5ddd5] rounded-lg">
+                          <div className="bg-white rounded-lg p-3 max-w-sm shadow-sm">
+                            {selectedTemplate.components?.map((comp: any, idx: number) => {
+                              // Replace {{1}}, {{2}} etc with mapped values or placeholders
+                              let text = comp.text || ''
+                              if (comp.type === 'HEADER' || comp.type === 'BODY') {
+                                text = text.replace(/\{\{(\d+)\}\}/g, (match: string, num: string) => {
+                                  const key = `${comp.type.toLowerCase()}_${num}`
+                                  const mapped = variableMapping[key]
+                                  if (mapped) {
+                                    if (mapped.startsWith('__fixed__:')) {
+                                      return `[${mapped.replace('__fixed__:', '')}]`
+                                    }
+                                    return `[${mapped}]`
+                                  }
+                                  return `[variavel ${num}]`
+                                })
+                              }
+                              return (
+                                <div key={idx}>
+                                  {comp.type === 'HEADER' && comp.format === 'DOCUMENT' && (
+                                    <div className="flex items-center gap-2 p-2 bg-gray-100 rounded mb-2">
+                                      <Code className="h-5 w-5 text-red-500" />
+                                      <span className="text-sm">Documento PDF</span>
+                                    </div>
+                                  )}
+                                  {comp.type === 'HEADER' && comp.text && (
+                                    <p className="font-bold text-sm mb-1">{text}</p>
+                                  )}
+                                  {comp.type === 'BODY' && (
+                                    <p className="text-sm whitespace-pre-wrap">{text}</p>
+                                  )}
+                                  {comp.type === 'FOOTER' && (
+                                    <p className="text-xs text-gray-500 mt-2">{comp.text}</p>
+                                  )}
+                                  {comp.type === 'BUTTONS' && comp.buttons && (
+                                    <div className="mt-3 space-y-1 border-t pt-2">
+                                      {comp.buttons.map((btn: any, bidx: number) => (
+                                        <div key={bidx} className="text-center text-blue-500 text-sm py-1 border rounded">
+                                          {btn.text}
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )
+                            })}
+                          </div>
                         </div>
                       </div>
                     )}
 
-                    {/* Variable Mapping */}
-                    {templateVariables.length > 0 && (
+                    {/* Variable Mapping - Improved */}
+                    {selectedTemplate && (
                       <div className="space-y-3 mt-4">
-                        <Label>Mapeamento de Variaveis</Label>
+                        <Label>Configurar Variaveis</Label>
                         <p className="text-xs text-muted-foreground">
-                          Associe cada variavel do template com um campo do webhook
+                          Para cada variavel, escolha um campo do webhook OU digite um valor fixo
                         </p>
 
-                        <div className="grid gap-3">
-                          {templateVariables.map((v) => (
-                            <div key={`${v.type}_${v.index}`} className="flex items-center gap-3">
-                              <div className="w-32 text-sm">
-                                <Badge variant="outline">
-                                  {v.type === 'header' ? 'Header' : 'Body'} {`{{${v.index}}}`}
-                                </Badge>
+                        <div className="space-y-3">
+                          {/* Document Header (PDF) - if template has DOCUMENT header format */}
+                          {selectedTemplate.components?.filter((c: any) =>
+                            c.type === 'HEADER' && (c.format === 'DOCUMENT' || c.format === 'document')
+                          ).map((comp: any, idx: number) => {
+                            const key = 'header_document'
+                            const currentValue = variableMapping[key] || ''
+                            const isFixed = currentValue.startsWith('__fixed__:')
+                            return (
+                              <div key={`doc_${idx}`} className="p-3 border rounded-lg space-y-2 bg-red-50/50">
+                                <div className="flex items-center gap-2">
+                                  <Badge variant="outline" className="bg-red-100">📄 Header Documento (PDF)</Badge>
+                                  <span className="text-xs text-muted-foreground">- URL do arquivo PDF do boleto</span>
+                                </div>
+                                <div className="flex gap-2">
+                                  <Select
+                                    value={isFixed ? '__fixed__' : (currentValue || 'arquivo_url')}
+                                    onValueChange={(val) => {
+                                      if (val === '__fixed__') {
+                                        setVariableMapping({ ...variableMapping, [key]: '__fixed__:' })
+                                      } else {
+                                        setVariableMapping({ ...variableMapping, [key]: val })
+                                      }
+                                    }}
+                                  >
+                                    <SelectTrigger className="flex-1">
+                                      <SelectValue placeholder="Escolha a fonte da URL do PDF" />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="arquivo_url">arquivo_url (URL do boleto)</SelectItem>
+                                      <SelectItem value="__fixed__">URL Fixa (digitar)</SelectItem>
+                                      {variables.filter((v: any) => !['arquivo_url'].includes(v.key)).map((wv: any) => (
+                                        <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                      ))}
+                                    </SelectContent>
+                                  </Select>
+                                  {isFixed && (
+                                    <Input
+                                      className="flex-1"
+                                      placeholder="https://exemplo.com/boleto.pdf"
+                                      value={currentValue.replace('__fixed__:', '')}
+                                      onChange={(e) => setVariableMapping({ ...variableMapping, [key]: `__fixed__:${e.target.value}` })}
+                                    />
+                                  )}
+                                </div>
                               </div>
-                              <span className="text-muted-foreground">=</span>
-                              <Select
-                                value={variableMapping[`${v.type}_${v.index}`] || ''}
-                                onValueChange={(val) => setVariableMapping({
-                                  ...variableMapping,
-                                  [`${v.type}_${v.index}`]: val
-                                })}
-                              >
-                                <SelectTrigger className="flex-1">
-                                  <SelectValue placeholder="Selecione variavel do webhook" />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  {variables.map((wv: any) => (
-                                    <SelectItem key={wv.key} value={wv.key}>
-                                      {`{{${wv.key}}}`}
-                                    </SelectItem>
-                                  ))}
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          ))}
+                            )
+                          })}
+
+                          {/* Text Header variables */}
+                          {selectedTemplate.components?.filter((c: any) => c.type === 'HEADER' && c.text).map((comp: any) => {
+                            const matches = comp.text.match(/\{\{(\d+)\}\}/g) || []
+                            return matches.map((match: string) => {
+                              const num = match.replace(/[{}]/g, '')
+                              const key = `header_${num}`
+                              const currentValue = variableMapping[key] || ''
+                              const isFixed = currentValue.startsWith('__fixed__:')
+                              return (
+                                <div key={key} className="p-3 border rounded-lg space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="bg-blue-50">Header {`{{${num}}}`}</Badge>
+                                    <span className="text-xs text-muted-foreground">- aparece no cabecalho</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Select
+                                      value={isFixed ? '__fixed__' : currentValue}
+                                      onValueChange={(val) => {
+                                        if (val === '__fixed__') {
+                                          setVariableMapping({ ...variableMapping, [key]: '__fixed__:' })
+                                        } else {
+                                          setVariableMapping({ ...variableMapping, [key]: val })
+                                        }
+                                      }}
+                                    >
+                                      <SelectTrigger className="flex-1">
+                                        <SelectValue placeholder="Escolha a fonte" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__fixed__">Valor Fixo (digitar)</SelectItem>
+                                        {/* Variáveis automáticas do sistema */}
+                                        <SelectItem value="dataehora">⏰ dataehora (Data e Hora)</SelectItem>
+                                        <SelectItem value="data">📅 data (Data atual)</SelectItem>
+                                        <SelectItem value="hora">🕐 hora (Hora atual)</SelectItem>
+                                        <SelectItem value="timestamp">🔢 timestamp (ISO)</SelectItem>
+                                        {/* Variáveis extraídas do payload */}
+                                        <SelectItem value="nome_cliente">nome_cliente (extraido)</SelectItem>
+                                        <SelectItem value="nome">nome</SelectItem>
+                                        <SelectItem value="valor">valor</SelectItem>
+                                        <SelectItem value="data_vencimento">data_vencimento</SelectItem>
+                                        <SelectItem value="linha_digitavel">linha_digitavel</SelectItem>
+                                        <SelectItem value="numero_cobranca">numero_cobranca</SelectItem>
+                                        <SelectItem value="pix_brcode">pix_brcode</SelectItem>
+                                        <SelectItem value="arquivo_url">arquivo_url</SelectItem>
+                                        {variables.filter((v: any) => !['nome_cliente', 'nome', 'valor', 'data_vencimento', 'linha_digitavel', 'numero_cobranca', 'pix_brcode', 'arquivo_url', 'dataehora', 'data', 'hora', 'timestamp'].includes(v.key)).map((wv: any) => (
+                                          <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    {isFixed && (
+                                      <Input
+                                        className="flex-1"
+                                        placeholder="Digite o valor fixo"
+                                        value={currentValue.replace('__fixed__:', '')}
+                                        onChange={(e) => setVariableMapping({ ...variableMapping, [key]: `__fixed__:${e.target.value}` })}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })
+                          })}
+
+                          {/* Body variables */}
+                          {selectedTemplate.components?.filter((c: any) => c.type === 'BODY').map((comp: any) => {
+                            const matches = comp.text.match(/\{\{(\d+)\}\}/g) || []
+                            return matches.map((match: string) => {
+                              const num = match.replace(/[{}]/g, '')
+                              const key = `body_${num}`
+                              const currentValue = variableMapping[key] || ''
+                              const isFixed = currentValue.startsWith('__fixed__:')
+                              return (
+                                <div key={key} className="p-3 border rounded-lg space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="bg-green-50">Body {`{{${num}}}`}</Badge>
+                                    <span className="text-xs text-muted-foreground">- aparece no corpo da mensagem</span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Select
+                                      value={isFixed ? '__fixed__' : currentValue}
+                                      onValueChange={(val) => {
+                                        if (val === '__fixed__') {
+                                          setVariableMapping({ ...variableMapping, [key]: '__fixed__:' })
+                                        } else {
+                                          setVariableMapping({ ...variableMapping, [key]: val })
+                                        }
+                                      }}
+                                    >
+                                      <SelectTrigger className="flex-1">
+                                        <SelectValue placeholder="Escolha a fonte" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="__fixed__">Valor Fixo (digitar)</SelectItem>
+                                        {/* Variáveis automáticas do sistema */}
+                                        <SelectItem value="dataehora">⏰ dataehora (Data e Hora)</SelectItem>
+                                        <SelectItem value="data">📅 data (Data atual)</SelectItem>
+                                        <SelectItem value="hora">🕐 hora (Hora atual)</SelectItem>
+                                        <SelectItem value="timestamp">🔢 timestamp (ISO)</SelectItem>
+                                        {/* Variáveis extraídas do payload */}
+                                        <SelectItem value="nome_cliente">nome_cliente (extraido)</SelectItem>
+                                        <SelectItem value="nome">nome</SelectItem>
+                                        <SelectItem value="valor">valor</SelectItem>
+                                        <SelectItem value="data_vencimento">data_vencimento</SelectItem>
+                                        <SelectItem value="linha_digitavel">linha_digitavel</SelectItem>
+                                        <SelectItem value="numero_cobranca">numero_cobranca</SelectItem>
+                                        <SelectItem value="pix_brcode">pix_brcode</SelectItem>
+                                        <SelectItem value="arquivo_url">arquivo_url</SelectItem>
+                                        {variables.filter((v: any) => !['nome_cliente', 'nome', 'valor', 'data_vencimento', 'linha_digitavel', 'numero_cobranca', 'pix_brcode', 'arquivo_url', 'dataehora', 'data', 'hora', 'timestamp'].includes(v.key)).map((wv: any) => (
+                                          <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    {isFixed && (
+                                      <Input
+                                        className="flex-1"
+                                        placeholder="Digite o valor fixo"
+                                        value={currentValue.replace('__fixed__:', '')}
+                                        onChange={(e) => setVariableMapping({ ...variableMapping, [key]: `__fixed__:${e.target.value}` })}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })
+                          })}
+
+                          {/* Button variables - show ALL buttons from template */}
+                          {selectedTemplate.components?.filter((c: any) => c.type === 'BUTTONS').map((comp: any, compIdx: number) => {
+                            const allButtons = comp.buttons || []
+
+                            // Check if has ORDER_DETAILS button
+                            const hasOrderDetails = allButtons.some((btn: any) =>
+                              btn.type?.toUpperCase() === 'ORDER_DETAILS'
+                            )
+
+                            if (hasOrderDetails) {
+                              // ORDER_DETAILS - configuração especial igual SjnetworkAPI
+                              return (
+                                <div key={`order_details_${compIdx}`} className="space-y-3">
+                                  <div className="p-3 border-2 border-purple-300 rounded-lg space-y-3 bg-purple-50/50">
+                                    <div className="flex items-center gap-2">
+                                      <Badge className="bg-purple-600">🛒 ORDER_DETAILS (Detalhes do Pedido)</Badge>
+                                    </div>
+                                    <p className="text-xs text-muted-foreground">
+                                      Configure os dados de pagamento que aparecerao no botao (igual SjnetworkAPI)
+                                    </p>
+
+                                    {/* PIX */}
+                                    <div className="flex gap-2 items-center">
+                                      <span className="text-sm font-medium w-32">Código PIX *</span>
+                                      <Select
+                                        value={variableMapping['order_pix']?.startsWith('__fixed__') ? '__fixed__' : (variableMapping['order_pix'] || 'pix_brcode')}
+                                        onValueChange={(val) => {
+                                          if (val === '__fixed__') {
+                                            setVariableMapping({ ...variableMapping, order_pix: '__fixed__:' })
+                                          } else {
+                                            setVariableMapping({ ...variableMapping, order_pix: val })
+                                          }
+                                        }}
+                                      >
+                                        <SelectTrigger className="flex-1">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="pix_brcode">pix_brcode</SelectItem>
+                                          <SelectItem value="__fixed__">Valor Fixo</SelectItem>
+                                          {variables.map((wv: any) => (
+                                            <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      {variableMapping['order_pix']?.startsWith('__fixed__') && (
+                                        <Input
+                                          className="flex-1"
+                                          placeholder="Código PIX"
+                                          value={variableMapping['order_pix']?.replace('__fixed__:', '') || ''}
+                                          onChange={(e) => setVariableMapping({ ...variableMapping, order_pix: `__fixed__:${e.target.value}` })}
+                                        />
+                                      )}
+                                    </div>
+
+                                    {/* Boleto */}
+                                    <div className="flex gap-2 items-center">
+                                      <span className="text-sm font-medium w-32">Linha Digitável</span>
+                                      <Select
+                                        value={variableMapping['order_boleto']?.startsWith('__fixed__') ? '__fixed__' : (variableMapping['order_boleto'] || 'linha_digitavel')}
+                                        onValueChange={(val) => {
+                                          if (val === '__fixed__') {
+                                            setVariableMapping({ ...variableMapping, order_boleto: '__fixed__:' })
+                                          } else {
+                                            setVariableMapping({ ...variableMapping, order_boleto: val })
+                                          }
+                                        }}
+                                      >
+                                        <SelectTrigger className="flex-1">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="linha_digitavel">linha_digitavel</SelectItem>
+                                          <SelectItem value="__fixed__">Valor Fixo</SelectItem>
+                                          {variables.map((wv: any) => (
+                                            <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      {variableMapping['order_boleto']?.startsWith('__fixed__') && (
+                                        <Input
+                                          className="flex-1"
+                                          placeholder="Linha digitável do boleto"
+                                          value={variableMapping['order_boleto']?.replace('__fixed__:', '') || ''}
+                                          onChange={(e) => setVariableMapping({ ...variableMapping, order_boleto: `__fixed__:${e.target.value}` })}
+                                        />
+                                      )}
+                                    </div>
+
+                                    {/* Valor */}
+                                    <div className="flex gap-2 items-center">
+                                      <span className="text-sm font-medium w-32">Valor *</span>
+                                      <Select
+                                        value={variableMapping['order_valor']?.startsWith('__fixed__') ? '__fixed__' : (variableMapping['order_valor'] || 'valor')}
+                                        onValueChange={(val) => {
+                                          if (val === '__fixed__') {
+                                            setVariableMapping({ ...variableMapping, order_valor: '__fixed__:' })
+                                          } else {
+                                            setVariableMapping({ ...variableMapping, order_valor: val })
+                                          }
+                                        }}
+                                      >
+                                        <SelectTrigger className="flex-1">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="valor">valor</SelectItem>
+                                          <SelectItem value="__fixed__">Valor Fixo</SelectItem>
+                                          {variables.map((wv: any) => (
+                                            <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      {variableMapping['order_valor']?.startsWith('__fixed__') && (
+                                        <Input
+                                          className="flex-1"
+                                          placeholder="99,00"
+                                          value={variableMapping['order_valor']?.replace('__fixed__:', '') || ''}
+                                          onChange={(e) => setVariableMapping({ ...variableMapping, order_valor: `__fixed__:${e.target.value}` })}
+                                        />
+                                      )}
+                                    </div>
+
+                                    {/* Número da Cobrança */}
+                                    <div className="flex gap-2 items-center">
+                                      <span className="text-sm font-medium w-32">Nº Cobrança *</span>
+                                      <Select
+                                        value={variableMapping['order_numero']?.startsWith('__fixed__') ? '__fixed__' : (variableMapping['order_numero'] || 'numero_cobranca')}
+                                        onValueChange={(val) => {
+                                          if (val === '__fixed__') {
+                                            setVariableMapping({ ...variableMapping, order_numero: '__fixed__:' })
+                                          } else {
+                                            setVariableMapping({ ...variableMapping, order_numero: val })
+                                          }
+                                        }}
+                                      >
+                                        <SelectTrigger className="flex-1">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="numero_cobranca">numero_cobranca</SelectItem>
+                                          <SelectItem value="__fixed__">Valor Fixo</SelectItem>
+                                          {variables.map((wv: any) => (
+                                            <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      {variableMapping['order_numero']?.startsWith('__fixed__') && (
+                                        <Input
+                                          className="flex-1"
+                                          placeholder="12345"
+                                          value={variableMapping['order_numero']?.replace('__fixed__:', '') || ''}
+                                          onChange={(e) => setVariableMapping({ ...variableMapping, order_numero: `__fixed__:${e.target.value}` })}
+                                        />
+                                      )}
+                                    </div>
+
+                                    {/* Documento PDF (opcional) */}
+                                    <div className="flex gap-2 items-center pt-2 border-t">
+                                      <span className="text-sm font-medium w-32">📄 Boleto PDF</span>
+                                      <Select
+                                        value={variableMapping['header_document']?.startsWith('__fixed__') ? '__fixed__' : (variableMapping['header_document'] || 'arquivo_url')}
+                                        onValueChange={(val) => {
+                                          if (val === '__fixed__') {
+                                            setVariableMapping({ ...variableMapping, header_document: '__fixed__:' })
+                                          } else if (val === 'none') {
+                                            const newMapping = { ...variableMapping }
+                                            delete newMapping['header_document']
+                                            setVariableMapping(newMapping)
+                                          } else {
+                                            setVariableMapping({ ...variableMapping, header_document: val })
+                                          }
+                                        }}
+                                      >
+                                        <SelectTrigger className="flex-1">
+                                          <SelectValue />
+                                        </SelectTrigger>
+                                        <SelectContent>
+                                          <SelectItem value="arquivo_url">arquivo_url (URL do boleto)</SelectItem>
+                                          <SelectItem value="none">Sem documento</SelectItem>
+                                          <SelectItem value="__fixed__">URL Fixa</SelectItem>
+                                          {variables.map((wv: any) => (
+                                            <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                          ))}
+                                        </SelectContent>
+                                      </Select>
+                                      {variableMapping['header_document']?.startsWith('__fixed__') && (
+                                        <Input
+                                          className="flex-1"
+                                          placeholder="https://exemplo.com/boleto.pdf"
+                                          value={variableMapping['header_document']?.replace('__fixed__:', '') || ''}
+                                          onChange={(e) => setVariableMapping({ ...variableMapping, header_document: `__fixed__:${e.target.value}` })}
+                                        />
+                                      )}
+                                    </div>
+
+                                    <p className="text-xs text-green-600 mt-2">
+                                      ✓ O nome do item será: "Fatura #[numero] - R$ [valor]"
+                                    </p>
+                                  </div>
+                                </div>
+                              )
+                            }
+
+                            // COPY_CODE buttons (padrão)
+                            return allButtons.map((btn: any, bidx: number) => {
+                              const key = `button_${bidx}`
+                              const currentValue = variableMapping[key] || ''
+                              const isFixed = currentValue.startsWith('__fixed__:')
+                              const buttonText = btn.text || `Botao ${bidx + 1}`
+                              const buttonType = btn.type || 'UNKNOWN'
+
+                              const needsCode = buttonType.toUpperCase().includes('COPY') ||
+                                               buttonType.toUpperCase().includes('COUPON') ||
+                                               buttonType.toUpperCase() === 'OTP' ||
+                                               btn.example
+
+                              return (
+                                <div key={key} className="p-3 border rounded-lg space-y-2">
+                                  <div className="flex items-center gap-2">
+                                    <Badge variant="outline" className="bg-purple-50">
+                                      Botao {bidx + 1}: {buttonText}
+                                    </Badge>
+                                    <span className="text-xs text-muted-foreground">
+                                      ({buttonType}) {needsCode ? '- precisa de codigo' : ''}
+                                    </span>
+                                  </div>
+                                  <div className="flex gap-2">
+                                    <Select
+                                      value={isFixed ? '__fixed__' : (currentValue || 'none')}
+                                      onValueChange={(val) => {
+                                        if (val === 'none') {
+                                          const newMapping = { ...variableMapping }
+                                          delete newMapping[key]
+                                          setVariableMapping(newMapping)
+                                        } else if (val === '__fixed__') {
+                                          setVariableMapping({ ...variableMapping, [key]: '__fixed__:' })
+                                        } else {
+                                          setVariableMapping({ ...variableMapping, [key]: val })
+                                        }
+                                      }}
+                                    >
+                                      <SelectTrigger className="flex-1">
+                                        <SelectValue placeholder="Configurar codigo do botao" />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="none">Nao configurar</SelectItem>
+                                        <SelectItem value="__fixed__">Valor Fixo (digitar)</SelectItem>
+                                        <SelectItem value="pix_brcode">pix_brcode (Chave PIX)</SelectItem>
+                                        <SelectItem value="linha_digitavel">linha_digitavel (Boleto)</SelectItem>
+                                        <SelectItem value="numero_cobranca">numero_cobranca</SelectItem>
+                                        {variables.filter((v: any) => !['pix_brcode', 'linha_digitavel', 'numero_cobranca'].includes(v.key)).map((wv: any) => (
+                                          <SelectItem key={wv.key} value={wv.key}>{wv.key}</SelectItem>
+                                        ))}
+                                      </SelectContent>
+                                    </Select>
+                                    {isFixed && (
+                                      <Input
+                                        className="flex-1"
+                                        placeholder="Digite o codigo"
+                                        value={currentValue.replace('__fixed__:', '')}
+                                        onChange={(e) => setVariableMapping({ ...variableMapping, [key]: `__fixed__:${e.target.value}` })}
+                                      />
+                                    )}
+                                  </div>
+                                </div>
+                              )
+                            })
+                          })}
                         </div>
                       </div>
                     )}

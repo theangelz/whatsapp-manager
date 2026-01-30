@@ -242,6 +242,9 @@ export async function instanceRoutes(fastify: FastifyInstance) {
 
       const metaTemplates = await cloudApi.getTemplates(instance.wabaId)
 
+      // Get list of template names from Meta
+      const metaTemplateNames = metaTemplates.map((t: any) => t.name)
+
       // Sync templates to database
       let synced = 0
       for (const template of metaTemplates) {
@@ -291,10 +294,19 @@ export async function instanceRoutes(fastify: FastifyInstance) {
         synced++
       }
 
+      // Delete templates that no longer exist in Meta
+      const deleted = await prisma.template.deleteMany({
+        where: {
+          companyId: instance.companyId,
+          name: { notIn: metaTemplateNames },
+        },
+      })
+
       return reply.send({
         success: true,
-        message: `${synced} templates sincronizados`,
-        total: metaTemplates.length
+        message: `${synced} templates sincronizados, ${deleted.count} removidos`,
+        total: metaTemplates.length,
+        removed: deleted.count
       })
     } catch (error: any) {
       console.error('Error syncing templates:', error)
