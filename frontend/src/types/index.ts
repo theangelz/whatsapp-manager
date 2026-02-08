@@ -224,6 +224,15 @@ export interface FlowNodeData {
     responseMappings?: Array<{ path: string; variable: string }>
   }
   targetFlowId?: string
+  // END node audit
+  auditEnabled?: boolean
+  auditGroupJid?: string
+  auditMessage?: string
+  auditWebhookEnabled?: boolean
+  auditWebhookMethod?: string
+  auditWebhookUrl?: string
+  auditWebhookHeaders?: string
+  auditWebhookBody?: string
 }
 
 export interface FlowEdge {

@@ -24,6 +24,7 @@ import {
   Loader2,
   Trash2,
   RotateCcw,
+  Copy,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
@@ -65,6 +66,7 @@ function FlowEditorContent() {
   const [nodes, setNodes, onNodesChange] = useNodesState([])
   const [edges, setEdges, onEdgesChange] = useEdgesState([])
   const [selectedNode, setSelectedNode] = useState<Node<FlowNodeData> | null>(null)
+  const [editingNode, setEditingNode] = useState<Node<FlowNodeData> | null>(null)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false)
 
@@ -220,6 +222,22 @@ function FlowEditorContent() {
     }
   }, [setEdges])
 
+  // Listen for edit node events from ActionButtons (pencil icon)
+  useEffect(() => {
+    const handleEditNode = (event: CustomEvent<{ id: string }>) => {
+      const node = nodes.find(n => n.id === event.detail.id)
+      if (node) {
+        setSelectedNode(node as Node<FlowNodeData>)
+        setEditingNode(node as Node<FlowNodeData>)
+      }
+    }
+
+    window.addEventListener('editNode', handleEditNode as EventListener)
+    return () => {
+      window.removeEventListener('editNode', handleEditNode as EventListener)
+    }
+  }, [nodes])
+
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault()
     event.dataTransfer.dropEffect = 'move'
@@ -251,11 +269,17 @@ function FlowEditorContent() {
   )
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: Node) => {
-    setSelectedNode(node)
+    setSelectedNode(node as Node<FlowNodeData>)
+  }, [])
+
+  const onNodeDoubleClick = useCallback((_: React.MouseEvent, node: Node) => {
+    setSelectedNode(node as Node<FlowNodeData>)
+    setEditingNode(node as Node<FlowNodeData>)
   }, [])
 
   const onPaneClick = useCallback(() => {
     setSelectedNode(null)
+    setEditingNode(null)
   }, [])
 
   const updateNodeData = useCallback(
@@ -279,8 +303,25 @@ function FlowEditorContent() {
       eds.filter((e) => e.source !== selectedNode.id && e.target !== selectedNode.id)
     )
     setSelectedNode(null)
+    setEditingNode(null)
     setHasUnsavedChanges(true)
   }, [selectedNode, setNodes, setEdges])
+
+  const duplicateSelectedNode = useCallback(() => {
+    if (!selectedNode || selectedNode.type === 'START') return
+    const newNode: Node = {
+      id: `node_${Date.now()}`,
+      type: selectedNode.type,
+      position: {
+        x: selectedNode.position.x + 50,
+        y: selectedNode.position.y + 80,
+      },
+      data: JSON.parse(JSON.stringify(selectedNode.data)),
+    }
+    setNodes((nds) => [...nds, newNode])
+    setSelectedNode(newNode)
+    setHasUnsavedChanges(true)
+  }, [selectedNode, setNodes])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -367,15 +408,26 @@ function FlowEditorContent() {
 
         <div className="flex items-center gap-3">
           {selectedNode && selectedNode.type !== 'START' && (
-            <Button
-              variant="outline"
-              size="sm"
-              onClick={deleteSelectedNode}
-              className="text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300 dark:border-red-800 dark:hover:bg-red-900/20"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Excluir
-            </Button>
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={duplicateSelectedNode}
+                className="border-gray-200 dark:border-zinc-700"
+              >
+                <Copy className="h-4 w-4 mr-1" />
+                Duplicar
+              </Button>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={deleteSelectedNode}
+                className="text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300 dark:border-red-800 dark:hover:bg-red-900/20"
+              >
+                <Trash2 className="h-4 w-4 mr-2" />
+                Excluir
+              </Button>
+            </>
           )}
 
           <Button
@@ -448,6 +500,7 @@ function FlowEditorContent() {
             onDrop={onDrop}
             onDragOver={onDragOver}
             onNodeClick={onNodeClick}
+            onNodeDoubleClick={onNodeDoubleClick}
             onPaneClick={onPaneClick}
             nodeTypes={nodeTypes}
             edgeTypes={edgeTypes}
@@ -475,11 +528,11 @@ function FlowEditorContent() {
           </ReactFlow>
         </div>
 
-        {selectedNode && (
+        {editingNode && (
           <NodeProperties
-            node={selectedNode}
+            node={editingNode}
             onUpdate={updateNodeData}
-            onClose={() => setSelectedNode(null)}
+            onClose={() => setEditingNode(null)}
             allNodes={nodes}
           />
         )}
@@ -487,7 +540,7 @@ function FlowEditorContent() {
 
       {/* Settings Dialog */}
       <Dialog open={settingsOpen} onOpenChange={setSettingsOpen}>
-        <DialogContent className="max-w-md">
+        <DialogContent className="max-w-md max-h-[90vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>Configuracoes do Fluxo</DialogTitle>
           </DialogHeader>
@@ -591,6 +644,7 @@ function FlowEditorContent() {
                 Mensagem enviada ao usuario quando o fluxo e encerrado por inatividade.
               </p>
             </div>
+
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setSettingsOpen(false)}>

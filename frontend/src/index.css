@@ -67,6 +67,22 @@
   cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='20' height='20' viewBox='0 0 24 24'%3E%3Cpath d='M10 4a2 2 0 0 1 4 0v6h2V6a2 2 0 1 1 4 0v8h2V9a2 2 0 1 1 4 0v7a8 8 0 0 1-8 8H12a8 8 0 0 1-8-8v-4a2 2 0 1 1 4 0v2h2V4z' fill='white' stroke='black' stroke-width='1.5'/%3E%3C/svg%3E") 10 10, grabbing;
 }
 
+/* Force default cursor on panels, dialogs and inputs over ReactFlow */
+.react-flow ~ div,
+[role="dialog"],
+[data-radix-popper-content-wrapper] {
+  cursor: default;
+}
+.react-flow ~ div input,
+.react-flow ~ div textarea,
+.react-flow ~ div select,
+[role="dialog"] input,
+[role="dialog"] textarea,
+[role="dialog"] select {
+  cursor: text;
+  caret-color: #000;
+}
+
 /* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 8px;

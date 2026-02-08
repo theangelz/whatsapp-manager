@@ -1242,6 +1242,119 @@ export function NodeProperties({ node, onUpdate, onClose, allNodes = [] }: NodeP
                 rows={2}
               />
             </div>
+
+            {/* Audit - WhatsApp Group */}
+            <div className="border-t pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  type="checkbox"
+                  id="auditEnabled"
+                  checked={!!data.auditEnabled}
+                  onChange={(e) => handleChange('auditEnabled', e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                <Label htmlFor="auditEnabled" className="cursor-pointer font-medium">
+                  Resumo via WhatsApp
+                </Label>
+              </div>
+
+              {data.auditEnabled && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Grupo/Numero destino</Label>
+                    <Input
+                      value={data.auditGroupJid || ''}
+                      onChange={(e) => handleChange('auditGroupJid', e.target.value)}
+                      placeholder="120363...@g.us ou 5521999999999"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Mensagem</Label>
+                    <Textarea
+                      value={data.auditMessage || ''}
+                      onChange={(e) => handleChange('auditMessage', e.target.value)}
+                      placeholder={"*Resumo*\nFluxo: {{_flowName}}\nContato: {{_contactName}}\nDuracao: {{_duration}}"}
+                      rows={4}
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Variaveis: {"{{_flowName}}, {{_contactName}}, {{_contactPhone}}, {{_startedAt}}, {{_endedAt}}, {{_duration}}"} + variaveis do fluxo.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Audit - Webhook HTTP */}
+            <div className="border-t pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <input
+                  type="checkbox"
+                  id="auditWebhookEnabled"
+                  checked={!!data.auditWebhookEnabled}
+                  onChange={(e) => handleChange('auditWebhookEnabled', e.target.checked)}
+                  className="rounded border-gray-300"
+                />
+                <Label htmlFor="auditWebhookEnabled" className="cursor-pointer font-medium">
+                  Webhook HTTP (auditoria)
+                </Label>
+              </div>
+
+              {data.auditWebhookEnabled && (
+                <div className="space-y-4">
+                  <div className="space-y-2">
+                    <Label>Metodo</Label>
+                    <Select
+                      value={data.auditWebhookMethod || 'POST'}
+                      onValueChange={(v) => handleChange('auditWebhookMethod', v)}
+                    >
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="GET">GET</SelectItem>
+                        <SelectItem value="POST">POST</SelectItem>
+                        <SelectItem value="PUT">PUT</SelectItem>
+                        <SelectItem value="PATCH">PATCH</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>URL</Label>
+                    <Input
+                      value={data.auditWebhookUrl || ''}
+                      onChange={(e) => handleChange('auditWebhookUrl', e.target.value)}
+                      placeholder="https://api.exemplo.com/webhook"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Aceita variaveis: {"{{variavel}}"}
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Headers (JSON)</Label>
+                    <Textarea
+                      value={data.auditWebhookHeaders || ''}
+                      onChange={(e) => handleChange('auditWebhookHeaders', e.target.value)}
+                      placeholder={'{"Content-Type": "application/json",\n"Authorization": "Bearer {{access_token}}"}'}
+                      rows={3}
+                      className="font-mono text-xs"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Body (JSON)</Label>
+                    <Textarea
+                      value={data.auditWebhookBody || ''}
+                      onChange={(e) => handleChange('auditWebhookBody', e.target.value)}
+                      placeholder={'{\n  "flow": "{{_flowName}}",\n  "contact": "{{_contactPhone}}",\n  "sn": "{{sn}}",\n  "result": "{{messageProvi}}",\n  "duration": "{{_duration}}"\n}'}
+                      rows={8}
+                      className="font-mono text-xs"
+                    />
+                    <p className="text-xs text-muted-foreground">
+                      Variaveis: {"{{_flowName}}, {{_contactName}}, {{_contactPhone}}, {{_startedAt}}, {{_endedAt}}, {{_duration}}"} + variaveis do fluxo.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         )
 

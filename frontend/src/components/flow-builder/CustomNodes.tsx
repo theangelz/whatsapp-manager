@@ -41,6 +41,8 @@ interface BaseNodeProps {
     condition?: { variable: string; operator: string; value?: string; cases?: Array<{ id: string; value: string }> }
     mediaUrl?: string
     httpConfig?: { url?: string; method?: string; headers?: Array<{ key: string; value: string }>; body?: string; responseVariable?: string; responseMappings?: Array<{ path: string; variable: string }> }
+    auditEnabled?: boolean
+    auditWebhookEnabled?: boolean
   }
   selected?: boolean
 }
@@ -85,14 +87,18 @@ const OutputHandles = () => (
   </>
 )
 
-// Action buttons component
-const ActionButtons = () => (
+// Action buttons component - Edit emits custom event to open properties panel
+const ActionButtons = ({ nodeId }: { nodeId?: string }) => (
   <div className="flex items-center gap-1">
-    <button className="w-6 h-6 rounded-full bg-emerald-100 hover:bg-emerald-200 flex items-center justify-center transition-colors">
+    <button
+      className="w-6 h-6 rounded-full bg-emerald-100 hover:bg-emerald-200 flex items-center justify-center transition-colors"
+      onClick={(e) => {
+        e.stopPropagation()
+        if (nodeId) window.dispatchEvent(new CustomEvent('editNode', { detail: { id: nodeId } }))
+      }}
+      title="Editar"
+    >
       <Edit3 className="w-3 h-3 text-emerald-600" />
-    </button>
-    <button className="w-6 h-6 rounded-full bg-red-100 hover:bg-red-200 flex items-center justify-center transition-colors">
-      <Trash2 className="w-3 h-3 text-red-500" />
     </button>
   </div>
 )
@@ -112,7 +118,7 @@ const PortLabel = ({ label, position }: { label: string; position: 'left' | 'rig
 }
 
 // Start Node
-export const StartNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const StartNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <div className={cn(cardStyles.header, gradients.start)}>
       <Play className="w-4 h-4" />
@@ -136,7 +142,7 @@ export const StartNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
 StartNode.displayName = 'StartNode'
 
 // Message Node
-export const MessageNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const MessageNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, data.waitForInput ? 'bg-gradient-to-r from-violet-500 to-purple-600' : gradients.message)}>
@@ -163,7 +169,7 @@ export const MessageNode = memo(({ data, selected }: NodeProps<BaseNodeProps['da
       <span className="text-[10px] text-gray-400 flex items-center gap-1">
         <Send className="w-3 h-3" /> {data.waitForInput ? 'Input' : 'Texto'}
       </span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
     <OutputHandles />
   </div>
@@ -171,7 +177,7 @@ export const MessageNode = memo(({ data, selected }: NodeProps<BaseNodeProps['da
 MessageNode.displayName = 'MessageNode'
 
 // Image Node
-export const ImageNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const ImageNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.media)}>
@@ -193,7 +199,7 @@ export const ImageNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">Mídia</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
     <OutputHandles />
   </div>
@@ -201,7 +207,7 @@ export const ImageNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
 ImageNode.displayName = 'ImageNode'
 
 // Audio Node
-export const AudioNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const AudioNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.media)}>
@@ -220,7 +226,7 @@ export const AudioNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">Áudio</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
     <OutputHandles />
   </div>
@@ -228,7 +234,7 @@ export const AudioNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
 AudioNode.displayName = 'AudioNode'
 
 // Video Node
-export const VideoNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const VideoNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.media)}>
@@ -250,7 +256,7 @@ export const VideoNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">Vídeo</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
     <OutputHandles />
   </div>
@@ -258,7 +264,7 @@ export const VideoNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
 VideoNode.displayName = 'VideoNode'
 
 // Document Node
-export const DocumentNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const DocumentNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.media)}>
@@ -277,7 +283,7 @@ export const DocumentNode = memo(({ data, selected }: NodeProps<BaseNodeProps['d
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">PDF/Doc</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
     <OutputHandles />
   </div>
@@ -285,7 +291,7 @@ export const DocumentNode = memo(({ data, selected }: NodeProps<BaseNodeProps['d
 DocumentNode.displayName = 'DocumentNode'
 
 // Menu Node - Text-based menu with numbered options
-export const MenuNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => {
+export const MenuNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => {
   const options = data.menuOptions || []
 
   return (
@@ -317,7 +323,7 @@ export const MenuNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data'
       </div>
       <div className={cardStyles.footer}>
         <span className="text-[10px] text-gray-400">{options.length} opções</span>
-        <ActionButtons />
+        <ActionButtons nodeId={id} />
       </div>
       {/* Multiple outputs - one per option + fallback */}
       {options.length > 0 ? (
@@ -403,7 +409,7 @@ export const MenuNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data'
 MenuNode.displayName = 'MenuNode'
 
 // Buttons Node
-export const ButtonsNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const ButtonsNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.interaction)}>
@@ -429,7 +435,7 @@ export const ButtonsNode = memo(({ data, selected }: NodeProps<BaseNodeProps['da
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">{data.buttons?.length || 0} botões</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
     {data.buttons && data.buttons.length > 0 ? (
       data.buttons.map((btn, i) => (
@@ -479,7 +485,7 @@ export const ButtonsNode = memo(({ data, selected }: NodeProps<BaseNodeProps['da
 ButtonsNode.displayName = 'ButtonsNode'
 
 // List Node
-export const ListNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => {
+export const ListNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => {
   const allRows = data.listSections?.flatMap(section => section.rows) || []
 
   return (
@@ -518,7 +524,7 @@ export const ListNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data'
       </div>
       <div className={cardStyles.footer}>
         <span className="text-[10px] text-gray-400">{allRows.length} itens</span>
-        <ActionButtons />
+        <ActionButtons nodeId={id} />
       </div>
       {allRows.length > 0 ? (
         allRows.map((row, i) => (
@@ -569,7 +575,7 @@ export const ListNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data'
 ListNode.displayName = 'ListNode'
 
 // Condition Node - Switch/Case style with multiple values
-export const ConditionNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => {
+export const ConditionNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => {
   const cases = data.condition?.cases || []
   const hasOldFormat = !cases.length && data.condition?.value !== undefined
 
@@ -595,7 +601,7 @@ export const ConditionNode = memo(({ data, selected }: NodeProps<BaseNodeProps['
         </div>
         <div className={cardStyles.footer}>
           <span className="text-[10px] text-gray-400">2 saídas</span>
-          <ActionButtons />
+          <ActionButtons nodeId={id} />
         </div>
         <Handle type="source" position={Position.Bottom} id="yes" className={cn(cardStyles.handle, '!bg-green-500')} style={{ left: '30%' }} />
         <span className="absolute text-[8px] bg-green-500 text-white px-1.5 py-0.5 rounded-full shadow-sm whitespace-nowrap pointer-events-none" style={{ left: '30%', bottom: -8, transform: 'translate(-50%, 100%)' }}>Sim</span>
@@ -648,7 +654,7 @@ export const ConditionNode = memo(({ data, selected }: NodeProps<BaseNodeProps['
       </div>
       <div className={cardStyles.footer}>
         <span className="text-[10px] text-gray-400">{cases.length} valores + fallback</span>
-        <ActionButtons />
+        <ActionButtons nodeId={id} />
       </div>
       {/* Bottom handles per case + fallback */}
       {cases.length > 0 ? (
@@ -690,7 +696,7 @@ export const ConditionNode = memo(({ data, selected }: NodeProps<BaseNodeProps['
 ConditionNode.displayName = 'ConditionNode'
 
 // Delay Node
-export const DelayNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const DelayNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.logic)}>
@@ -708,7 +714,7 @@ export const DelayNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">Timer</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
     <OutputHandles />
   </div>
@@ -716,7 +722,7 @@ export const DelayNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data
 DelayNode.displayName = 'DelayNode'
 
 // Set Variable Node
-export const SetVariableNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const SetVariableNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.data)}>
@@ -739,7 +745,7 @@ export const SetVariableNode = memo(({ data, selected }: NodeProps<BaseNodeProps
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">Dados</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
     <OutputHandles />
   </div>
@@ -747,7 +753,7 @@ export const SetVariableNode = memo(({ data, selected }: NodeProps<BaseNodeProps
 SetVariableNode.displayName = 'SetVariableNode'
 
 // HTTP Request Node
-export const HttpRequestNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => {
+export const HttpRequestNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => {
   const headersCount = data.httpConfig?.headers?.length || 0
   const mappingsCount = data.httpConfig?.responseMappings?.length || 0
 
@@ -804,7 +810,7 @@ export const HttpRequestNode = memo(({ data, selected }: NodeProps<BaseNodeProps
       </div>
       <div className={cardStyles.footer}>
         <span className="text-[10px] text-gray-400">API</span>
-        <ActionButtons />
+        <ActionButtons nodeId={id} />
       </div>
       <OutputHandles />
     </div>
@@ -813,7 +819,7 @@ export const HttpRequestNode = memo(({ data, selected }: NodeProps<BaseNodeProps
 HttpRequestNode.displayName = 'HttpRequestNode'
 
 // Transfer Node
-export const TransferNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const TransferNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.transfer)}>
@@ -831,14 +837,14 @@ export const TransferNode = memo(({ data, selected }: NodeProps<BaseNodeProps['d
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">Humano</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
   </div>
 ))
 TransferNode.displayName = 'TransferNode'
 
 // Go To Flow Node
-export const GoToFlowNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const GoToFlowNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.api)}>
@@ -853,14 +859,14 @@ export const GoToFlowNode = memo(({ data, selected }: NodeProps<BaseNodeProps['d
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">Redirect</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
   </div>
 ))
 GoToFlowNode.displayName = 'GoToFlowNode'
 
 // End Node
-export const EndNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']>) => (
+export const EndNode = memo(({ id, data, selected }: NodeProps<BaseNodeProps['data']>) => (
   <div className={cn(cardStyles.base, selected && cardStyles.selected)}>
     <InputHandles />
     <div className={cn(cardStyles.header, gradients.end)}>
@@ -879,10 +885,26 @@ export const EndNode = memo(({ data, selected }: NodeProps<BaseNodeProps['data']
           <span>Conversa finalizada</span>
         </div>
       )}
+      {(data.auditEnabled || data.auditWebhookEnabled) && (
+        <div className="flex flex-col gap-1 mt-2">
+          {data.auditEnabled && (
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-blue-50 rounded text-blue-600 text-[11px]">
+              <Send className="w-3 h-3" />
+              <span>WhatsApp audit</span>
+            </div>
+          )}
+          {data.auditWebhookEnabled && (
+            <div className="flex items-center gap-1.5 px-2 py-1 bg-purple-50 rounded text-purple-600 text-[11px]">
+              <Globe className="w-3 h-3" />
+              <span>Webhook audit</span>
+            </div>
+          )}
+        </div>
+      )}
     </div>
     <div className={cardStyles.footer}>
       <span className="text-[10px] text-gray-400">Final</span>
-      <ActionButtons />
+      <ActionButtons nodeId={id} />
     </div>
   </div>
 ))

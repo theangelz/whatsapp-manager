@@ -133,6 +133,8 @@ export class BaileysManager {
     }
 
     const jid = this.formatJid(to)
+    // Remove internal routing field before sending
+    delete (content as any)._instanceId
 
     try {
       switch (type) {
@@ -368,10 +370,6 @@ export class BaileysManager {
     if (!msg.key.fromMe && msg.message) {
       const instance = await prisma.instance.findUnique({
         where: { id: instanceId },
-        include: {
-          typebotIntegration: true,
-          n8nIntegration: true,
-        },
       })
 
       if (!instance) return
@@ -434,46 +432,46 @@ export class BaileysManager {
         type = 'document'
       }
 
-      // Save message
-      await prisma.message.create({
-        data: {
-          instanceId,
-          remoteJid,
-          messageId: msg.key.id || '',
-          direction: 'INBOUND',
-          status: 'DELIVERED',
-          type,
-          content,
-          deliveredAt: new Date(),
-        },
-      })
-
-      // Update metrics
-      await prisma.instance.update({
-        where: { id: instanceId },
-        data: { messagesReceived: { increment: 1 } },
-      })
-
-      // Update contact's lastInboundAt for 24h window tracking
+      // Save message, update metrics & contact in parallel (non-blocking for flow)
+      const dbOps: Promise<any>[] = [
+        prisma.message.create({
+          data: {
+            instanceId,
+            remoteJid,
+            messageId: msg.key.id || '',
+            direction: 'INBOUND',
+            status: 'DELIVERED',
+            type,
+            content,
+            deliveredAt: new Date(),
+          },
+        }),
+        prisma.instance.update({
+          where: { id: instanceId },
+          data: { messagesReceived: { increment: 1 } },
+        }),
+      ]
       if (instance.companyId && phoneNumber) {
-        await prisma.contact.upsert({
-          where: {
-            companyId_phoneNumber: {
+        dbOps.push(
+          prisma.contact.upsert({
+            where: {
+              companyId_phoneNumber: {
+                companyId: instance.companyId,
+                phoneNumber: phoneNumber,
+              },
+            },
+            update: { lastInboundAt: new Date() },
+            create: {
               companyId: instance.companyId,
               phoneNumber: phoneNumber,
+              name: phoneNumber,
+              lastInboundAt: new Date(),
             },
-          },
-          update: {
-            lastInboundAt: new Date(),
-          },
-          create: {
-            companyId: instance.companyId,
-            phoneNumber: phoneNumber,
-            name: phoneNumber,
-            lastInboundAt: new Date(),
-          },
-        })
+          })
+        )
       }
+      // Fire all DB writes in parallel - don't wait before processing flow
+      Promise.all(dbOps).catch(err => console.error('DB ops error:', err))
 
       // Emit to socket
       this.io.to(`instance:${instanceId}`).emit('message-received', {
@@ -523,7 +521,13 @@ export class BaileysManager {
       }
 
       // Trigger webhooks (Typebot, n8n, custom) if no flow handled it
-      await this.triggerWebhooks(instance, {
+      // Lazy load integrations only when needed
+      const fullInstance = await prisma.instance.findUnique({
+        where: { id: instanceId },
+        include: { typebotIntegration: true, n8nIntegration: true },
+      })
+      if (!fullInstance) return
+      await this.triggerWebhooks(fullInstance, {
         event: 'message.received',
         from: phoneNumber,
         content,

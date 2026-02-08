@@ -65,6 +65,7 @@ export class FlowEngine {
       _triggerMessage: message,
     }
     session = await this.startSession(flow, instanceId, remoteJid, initialVars)
+
     await this.executeFlow(session)
 
     return true
@@ -101,11 +102,12 @@ export class FlowEngine {
     // Get instance to find company
     const instance = await prisma.instance.findUnique({
       where: { id: instanceId },
+      select: { companyId: true },
     })
 
     if (!instance) return null
 
-    // Find active flows for this company
+    // Find active flows for this company - lightweight query (no nodes/edges)
     const flows = await prisma.flow.findMany({
       where: {
         companyId: instance.companyId,
@@ -115,9 +117,11 @@ export class FlowEngine {
           { instanceId },       // Instance-specific flows
         ],
       },
-      include: {
-        nodes: true,
-        edges: true,
+      select: {
+        id: true,
+        triggerType: true,
+        triggerValue: true,
+        instanceId: true,
       },
       orderBy: [
         { instanceId: 'desc' }, // Instance-specific first
@@ -125,44 +129,45 @@ export class FlowEngine {
       ],
     })
 
+    let matchedFlowId: string | null = null
+
     for (const flow of flows) {
-      // Check trigger type
       switch (flow.triggerType) {
         case 'KEYWORD':
           if (flow.triggerValue) {
             const keywords = flow.triggerValue.split(',').map((k: string) => k.trim().toLowerCase())
             const msgLower = message.toLowerCase().trim()
             if (keywords.some((k: string) => msgLower === k || msgLower.startsWith(k + ' '))) {
-              return flow as FlowWithRelations
+              matchedFlowId = flow.id
             }
           }
           break
-
         case 'ALL':
-          if (messageType === 'text') {
-            return flow as FlowWithRelations
-          }
+          if (messageType === 'text') matchedFlowId = flow.id
           break
-
         case 'BUTTON_REPLY':
           if (messageType === 'button_reply' && buttonId) {
-            if (!flow.triggerValue || flow.triggerValue === buttonId) {
-              return flow as FlowWithRelations
-            }
+            if (!flow.triggerValue || flow.triggerValue === buttonId) matchedFlowId = flow.id
           }
           break
-
         case 'LIST_REPLY':
           if (messageType === 'list_reply' && listRowId) {
-            if (!flow.triggerValue || flow.triggerValue === listRowId) {
-              return flow as FlowWithRelations
-            }
+            if (!flow.triggerValue || flow.triggerValue === listRowId) matchedFlowId = flow.id
           }
           break
       }
+      if (matchedFlowId) break
     }
 
-    return null
+    if (!matchedFlowId) return null
+
+    // Only load full flow (nodes + edges) for the matched flow
+    const fullFlow = await prisma.flow.findUnique({
+      where: { id: matchedFlowId },
+      include: { nodes: true, edges: true },
+    })
+
+    return fullFlow as FlowWithRelations | null
   }
 
   private async startSession(
@@ -237,7 +242,7 @@ export class FlowEngine {
       const result = await this.executeNode(session, currentNode)
 
       if (result.waitForInput) {
-        // Update session to wait for input
+        // Update session to wait for input (single DB write)
         await prisma.flowSession.update({
           where: { id: session.id },
           data: {
@@ -251,30 +256,21 @@ export class FlowEngine {
       }
 
       if (result.endFlow) {
-        // End the session
+        // End the session (single DB write)
         await prisma.flowSession.update({
           where: { id: session.id },
           data: {
             isActive: false,
             completedAt: new Date(),
             lastActivity: new Date(),
+            variables: session.variables as any,
           },
         })
         return
       }
 
-      // Find next node
+      // Find next node - keep in memory, no DB update per node
       currentNodeId = await this.findNextNode(session, currentNode, result.outputHandle)
-
-      // Update session
-      await prisma.flowSession.update({
-        where: { id: session.id },
-        data: {
-          currentNodeId,
-          lastActivity: new Date(),
-          variables: session.variables as any,
-        },
-      })
     }
 
     // No more nodes, end session
@@ -283,6 +279,7 @@ export class FlowEngine {
       data: {
         isActive: false,
         completedAt: new Date(),
+        variables: session.variables as any,
       },
     })
   }
@@ -434,10 +431,7 @@ export class FlowEngine {
 
       case 'HTTP_REQUEST':
         try {
-          console.log('[FlowEngine] HTTP_REQUEST url:', this.replaceVariables(data.httpConfig?.url || '', variables))
-          console.log('[FlowEngine] HTTP_REQUEST variables before:', Object.keys(variables).join(', '))
           const response = await this.executeHttpRequest(data.httpConfig, variables)
-          console.log('[FlowEngine] HTTP_REQUEST response:', JSON.stringify(response)?.substring(0, 500))
 
           // Save full response if responseVariable is set (legacy)
           if (data.httpConfig?.responseVariable) {
@@ -450,7 +444,6 @@ export class FlowEngine {
               if (mapping.path && mapping.variable) {
                 const value = this.getNestedValue(response, mapping.path)
                 variables[mapping.variable] = value !== undefined ? value : null
-                console.log(`[FlowEngine] Mapped ${mapping.path} → ${mapping.variable} = ${JSON.stringify(value)?.substring(0, 200)}`)
               }
             }
           }
@@ -496,10 +489,91 @@ export class FlowEngine {
             text: this.replaceVariables(data.content, variables),
           }, 'text')
         }
+        // Send audit if configured on the END node
+        await this.sendAuditFromNode(data, session, variables)
         return { endFlow: true }
 
       default:
         return {}
+    }
+  }
+
+  private buildAuditVars(session: SessionWithFlow, variables: Record<string, any>): Record<string, any> {
+    const now = new Date()
+    const startedAt = session.createdAt
+    const durationMs = now.getTime() - startedAt.getTime()
+    const durationMin = Math.floor(durationMs / 60000)
+    const durationSec = Math.floor((durationMs % 60000) / 1000)
+
+    return {
+      ...variables,
+      _flowName: session.flow.name,
+      _contactName: variables._contactName || '',
+      _contactPhone: variables._contactPhone || '',
+      _startedAt: startedAt.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+      _endedAt: now.toLocaleString('pt-BR', { timeZone: 'America/Sao_Paulo' }),
+      _duration: durationMin > 0 ? `${durationMin}min ${durationSec}s` : `${durationSec}s`,
+    }
+  }
+
+  private async sendAuditFromNode(data: Record<string, any>, session: SessionWithFlow, variables: Record<string, any>): Promise<void> {
+    const auditVars = this.buildAuditVars(session, variables)
+
+    // 1. WhatsApp audit - send via baileysManager.sendTextMessage (uses @s.whatsapp.net, syncs to WhatsApp Web)
+    if (data.auditEnabled && data.auditGroupJid) {
+      try {
+        const auditTemplate = data.auditMessage || ''
+        if (auditTemplate) {
+          const auditText = this.replaceVariables(auditTemplate, auditVars)
+          const to = data.auditGroupJid.trim()
+          // Use baileysManager directly via server export (proper @s.whatsapp.net JID, syncs WhatsApp Web)
+          const server = await import('../../server.js')
+          const manager = server.baileysManager
+          if (manager) {
+            await manager.sendTextMessage(session.instanceId, to, auditText)
+            console.log(`[FlowEngine] WhatsApp audit sent to ${to} for session ${session.id}`)
+          }
+        }
+      } catch (error: any) {
+        console.error(`[FlowEngine] WhatsApp audit failed:`, error.message)
+      }
+    }
+
+    // 2. Webhook HTTP audit
+    if (data.auditWebhookEnabled && data.auditWebhookUrl) {
+      try {
+        const axios = (await import('axios')).default
+        const url = this.replaceVariables(data.auditWebhookUrl, auditVars)
+        const method = (data.auditWebhookMethod || 'POST').toUpperCase()
+
+        // Parse headers
+        let headers: Record<string, string> = { 'Content-Type': 'application/json' }
+        if (data.auditWebhookHeaders) {
+          try {
+            const rawHeaders = this.replaceVariables(data.auditWebhookHeaders, auditVars)
+            headers = { ...headers, ...JSON.parse(rawHeaders) }
+          } catch (e) {
+            console.error('[FlowEngine] Audit webhook headers parse error:', e)
+          }
+        }
+
+        // Parse body
+        let body: any = undefined
+        if (data.auditWebhookBody && method !== 'GET') {
+          try {
+            const rawBody = this.replaceVariables(data.auditWebhookBody, auditVars)
+            body = JSON.parse(rawBody)
+          } catch (e) {
+            // If not valid JSON, send as raw text
+            body = this.replaceVariables(data.auditWebhookBody, auditVars)
+          }
+        }
+
+        await axios({ method, url, headers, data: body, timeout: 15000 })
+        console.log(`[FlowEngine] Webhook audit sent to ${url} for session ${session.id}`)
+      } catch (error: any) {
+        console.error(`[FlowEngine] Webhook audit failed:`, error.message)
+      }
     }
   }
 
