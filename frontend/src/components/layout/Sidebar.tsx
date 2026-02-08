@@ -18,6 +18,7 @@ import {
   Crown,
   Globe,
   Zap,
+  Timer,
 } from 'lucide-react'
 import { useAuthStore } from '@/stores/auth.store'
 import { Button } from '@/components/ui/button'
@@ -33,6 +34,7 @@ const menuItems = [
   { path: '/templates', label: 'Templates Meta', icon: FileText },
   { path: '/webhook-events', label: 'Webhook Entrada', icon: Globe },
   { path: '/automations', label: 'Automacoes', icon: Zap },
+  { path: '/window-subscribers', label: 'Janela 24h', icon: Timer },
   { path: '/typebot', label: 'Typebot', icon: Bot },
   { path: '/webhooks', label: 'Webhooks', icon: Webhook },
   { path: '/api-docs', label: 'API Docs', icon: Code },

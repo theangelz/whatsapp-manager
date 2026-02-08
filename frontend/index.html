@@ -7,6 +7,21 @@
     <title>WhatsApp Manager</title>
   </head>
   <body>
+    <!-- Facebook SDK root element -->
+    <div id="fb-root"></div>
+
+    <!-- Facebook SDK - loaded asynchronously -->
+    <script>
+      // Facebook SDK will be initialized by React after loading env vars
+      window.fbAsyncInit = function() {
+        // FB.init will be called from useFacebookSDK hook
+        console.log('[FB SDK] Loaded and ready for initialization');
+      };
+    </script>
+    <script async defer crossorigin="anonymous"
+      src="https://connect.facebook.net/pt_BR/sdk.js">
+    </script>
+
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>

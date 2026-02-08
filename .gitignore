@@ -70,3 +70,5 @@ backend/src/*.ORIGINAL.ts
 
 # Notas de desenvolvimento (local)
 NOTAS_DESENVOLVIMENTO.md
+CLAUDE_NOTES.md
+DEV_NOTES.md

@@ -22,6 +22,7 @@ enum InstanceStatus {
 enum InstanceChannel {
   BAILEYS
   CLOUD_API
+  COEXISTENCE
 }
 
 enum MessageStatus {
@@ -65,14 +66,15 @@ model Company {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  users            User[]
-  instances        Instance[]
-  contacts         Contact[]
-  campaigns        Campaign[]
-  templates        Template[]
-  flows            Flow[]
-  webhookEvents    WebhookEvent[]
-  automations      Automation[]
+  users              User[]
+  instances          Instance[]
+  contacts           Contact[]
+  campaigns          Campaign[]
+  templates          Template[]
+  flows              Flow[]
+  webhookEvents      WebhookEvent[]
+  automations        Automation[]
+  windowSubscribers  WindowSubscriber[]
 
   @@map("companies")
 }
@@ -142,27 +144,30 @@ model Instance {
   n8nIntegration         N8nIntegration?
   campaignInstances      CampaignInstance[]
   automations            Automation[]
+  windowSubscribers      WindowSubscriber[]
 
   @@map("instances")
 }
 
 model Contact {
-  id          String   @id @default(uuid())
-  companyId   String
-  name        String
-  phoneNumber String
-  email       String?
-  tags        String[] @default([])
-  metadata    Json?
-  isActive    Boolean  @default(true)
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id            String    @id @default(uuid())
+  companyId     String
+  name          String
+  phoneNumber   String
+  email         String?
+  tags          String[]  @default([])
+  metadata      Json?
+  isActive      Boolean   @default(true)
+  lastInboundAt DateTime? // Última mensagem recebida do contato (janela 24h)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   company           Company            @relation(fields: [companyId], references: [id], onDelete: Cascade)
   messages          Message[]
   campaignContacts  CampaignContact[]
 
   @@unique([companyId, phoneNumber])
+  @@index([companyId, lastInboundAt])
   @@map("contacts")
 }
 
@@ -377,6 +382,7 @@ enum FlowNodeType {
   AUDIO           // Enviar áudio
   VIDEO           // Enviar vídeo
   DOCUMENT        // Enviar documento
+  MENU            // Menu numerado (texto)
   BUTTONS         // Mensagem com botões
   LIST            // Mensagem com lista/menu
   CONDITION       // Condicional (if/else)
@@ -531,6 +537,10 @@ model Automation {
   metaTemplateName    String?           // Nome do template na Meta
   metaTemplateLanguage String?          @default("pt_BR")
 
+  // Fallback: usar texto livre se janela 24h aberta, senão template
+  useWindowFallback   Boolean           @default(false)  // Ativar lógica de janela 24h
+  fallbackTemplateName String?          // Template para usar quando janela fechada
+
   // Codigo para identificar template (ex: $Template1, $Template2, $Template3)
   // Usado para roteamento automatico quando o payload contem esse codigo
   templateCode        String?           // Ex: "$Template1", "$Template2", "$Template3"
@@ -572,6 +582,27 @@ enum AutomationLogStatus {
   PROCESSING
   SENT
   FAILED
+}
+
+// Assinantes de janela 24h - números que precisam manter janela aberta
+model WindowSubscriber {
+  id            String    @id @default(uuid())
+  companyId     String
+  instanceId    String    // Instância Cloud API para enviar notificações
+  phoneNumber   String    // Número que precisa da janela aberta
+  name          String?   // Nome para identificação
+  notifyTime    String    @default("17:30") // Horário para enviar notificação (HH:mm)
+  isActive      Boolean   @default(true)
+  lastNotified  DateTime? // Última vez que foi notificado
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  company       Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  instance      Instance  @relation(fields: [instanceId], references: [id], onDelete: Cascade)
+
+  @@unique([companyId, phoneNumber])
+  @@index([isActive, notifyTime])
+  @@map("window_subscribers")
 }
 
 model AutomationLog {

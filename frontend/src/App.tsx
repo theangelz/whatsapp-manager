@@ -18,6 +18,7 @@ import { Admin } from '@/pages/Admin'
 import { Groups } from '@/pages/Groups'
 import { WebhookEvents } from '@/pages/WebhookEvents'
 import { Automations } from '@/pages/Automations'
+import { WindowSubscribers } from '@/pages/WindowSubscribers'
 
 function PrivateRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated } = useAuthStore()
@@ -73,6 +74,7 @@ export default function App() {
         <Route path="/admin" element={<Admin />} />
         <Route path="/webhook-events" element={<WebhookEvents />} />
         <Route path="/automations" element={<Automations />} />
+        <Route path="/window-subscribers" element={<WindowSubscribers />} />
       </Route>
 
       {/* FlowEditor has its own layout */}

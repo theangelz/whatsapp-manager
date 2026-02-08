@@ -17,7 +17,7 @@ const flowNodeSchema = z.object({
   id: z.string(),
   type: z.enum([
     'START', 'MESSAGE', 'IMAGE', 'AUDIO', 'VIDEO', 'DOCUMENT',
-    'BUTTONS', 'LIST', 'CONDITION', 'DELAY', 'SET_VARIABLE',
+    'MENU', 'BUTTONS', 'LIST', 'CONDITION', 'DELAY', 'SET_VARIABLE',
     'HTTP_REQUEST', 'TRANSFER', 'GO_TO_FLOW', 'END'
   ]),
   positionX: z.number(),
@@ -390,6 +390,65 @@ export async function flowRoutes(fastify: FastifyInstance) {
     })
 
     return sessions
+  })
+
+  // Proxy HTTP test request (avoids CORS issues from browser)
+  fastify.post('/test-http', async (request, reply) => {
+    const { url, method, headers, body } = request.body as {
+      url: string
+      method?: string
+      headers?: Record<string, string>
+      body?: string
+    }
+
+    if (!url) {
+      return reply.status(400).send({ error: 'URL is required' })
+    }
+
+    fastify.log.info({ testHttp: { url, method, headers, body } }, 'test-http proxy request')
+
+    try {
+      // Clean whitespace from header values (copy/paste can introduce spaces/newlines)
+      const cleanHeaders: Record<string, string> = {}
+      if (headers) {
+        for (const [k, v] of Object.entries(headers)) {
+          const trimmed = v.trim()
+          // For Bearer/Basic auth, preserve prefix space but remove all whitespace from token
+          const authMatch = trimmed.match(/^(Bearer|Basic)\s+(.+)$/i)
+          if (authMatch) {
+            cleanHeaders[k.trim()] = `${authMatch[1]} ${authMatch[2].replace(/\s+/g, '')}`
+          } else {
+            cleanHeaders[k.trim()] = trimmed
+          }
+        }
+      }
+
+      const fetchOptions: RequestInit = {
+        method: method || 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+          ...cleanHeaders,
+        },
+      }
+
+      if (body && ['POST', 'PUT', 'PATCH', 'DELETE'].includes((method || 'GET').toUpperCase())) {
+        fetchOptions.body = body
+      }
+
+      const response = await fetch(url, fetchOptions)
+      const contentType = response.headers.get('content-type')
+      let data
+
+      if (contentType?.includes('application/json')) {
+        data = await response.json()
+      } else {
+        data = await response.text()
+      }
+
+      return { success: response.ok, status: response.status, data }
+    } catch (error: any) {
+      return reply.status(200).send({ success: false, error: error.message || 'Request failed' })
+    }
   })
 
   // Manually end a session

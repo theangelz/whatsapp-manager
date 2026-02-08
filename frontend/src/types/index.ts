@@ -16,7 +16,7 @@ export interface Instance {
   id: string
   name: string
   description?: string
-  channel: 'BAILEYS' | 'CLOUD_API'
+  channel: 'BAILEYS' | 'CLOUD_API' | 'COEXISTENCE'
   status: 'DISCONNECTED' | 'CONNECTING' | 'CONNECTED' | 'BANNED'
   phoneNumber?: string
   profileName?: string
@@ -153,6 +153,7 @@ export type FlowNodeType =
   | 'AUDIO'
   | 'VIDEO'
   | 'DOCUMENT'
+  | 'MENU'
   | 'BUTTONS'
   | 'LIST'
   | 'CONDITION'
@@ -197,11 +198,14 @@ export interface FlowNodeData {
   mediaType?: string
   fileName?: string
   buttons?: Array<{ id: string; text: string }>
+  menuOptions?: Array<{ id: string; trigger: string; label: string }>
   listSections?: Array<{
     title: string
     rows: Array<{ id: string; title: string; description?: string }>
   }>
   buttonText?: string
+  waitForInput?: boolean
+  inputVariable?: string
   delay?: number
   variable?: string
   value?: string
@@ -209,13 +213,15 @@ export interface FlowNodeData {
     variable: string
     operator: 'equals' | 'contains' | 'startsWith' | 'endsWith' | 'regex' | 'exists'
     value?: string
+    cases?: Array<{ id: string; value: string }>
   }
   httpConfig?: {
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE'
+    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE'
     url: string
-    headers?: Record<string, string>
+    headers?: Array<{ key: string; value: string }>
     body?: string
     responseVariable?: string
+    responseMappings?: Array<{ path: string; variable: string }>
   }
   targetFlowId?: string
 }
@@ -288,7 +294,7 @@ export interface Automation {
   instance?: {
     id: string
     name: string
-    channel: 'BAILEYS' | 'CLOUD_API'
+    channel: 'BAILEYS' | 'CLOUD_API' | 'COEXISTENCE'
     status: string
   }
   _count?: {

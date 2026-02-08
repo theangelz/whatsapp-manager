@@ -45,6 +45,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { nodeTypes } from '@/components/flow-builder/CustomNodes'
+import CustomEdge from '@/components/flow-builder/CustomEdge'
+
+const edgeTypes = {
+  custom: CustomEdge,
+}
 import { NodesSidebar } from '@/components/flow-builder/NodesSidebar'
 import { NodeProperties } from '@/components/flow-builder/NodeProperties'
 import api from '@/services/api'
@@ -85,6 +90,8 @@ function FlowEditorContent() {
     triggerType: 'KEYWORD' as FlowTriggerType,
     triggerValue: '',
     instanceId: '',
+    inactivityTimeout: 5,
+    timeoutMessage: 'Sessao encerrada por inatividade. Envie uma mensagem para iniciar novamente.',
   })
 
   // Load flow data
@@ -106,18 +113,22 @@ function FlowEditorContent() {
         sourceHandle: edge.sourceHandle || undefined,
         targetHandle: edge.targetHandle || undefined,
         label: edge.label || undefined,
+        type: 'custom', // Use custom edge with delete button
         animated: true,
         style: { stroke: '#6366f1', strokeWidth: 2 },
       }))
 
       setNodes(rfNodes)
       setEdges(rfEdges)
+      const settings = (flow.settings || {}) as Record<string, any>
       setFlowSettings({
         name: flow.name,
         description: flow.description || '',
         triggerType: flow.triggerType,
         triggerValue: flow.triggerValue || '',
         instanceId: flow.instanceId || '',
+        inactivityTimeout: settings.inactivityTimeout || 5,
+        timeoutMessage: settings.timeoutMessage || 'Sessao encerrada por inatividade. Envie uma mensagem para iniciar novamente.',
       })
     }
   }, [flow, setNodes, setEdges])
@@ -156,9 +167,11 @@ function FlowEditorContent() {
 
   const updateSettingsMutation = useMutation({
     mutationFn: async (data: typeof flowSettings) => {
+      const { inactivityTimeout, timeoutMessage, ...rest } = data
       await api.put(`/flows/${id}`, {
-        ...data,
+        ...rest,
         instanceId: data.instanceId || null,
+        settings: { inactivityTimeout, timeoutMessage },
       })
     },
     onSuccess: () => {
@@ -182,6 +195,7 @@ function FlowEditorContent() {
         addEdge(
           {
             ...params,
+            type: 'custom', // Use custom edge with delete button
             animated: true,
             style: { stroke: '#6366f1', strokeWidth: 2 },
           },
@@ -192,6 +206,19 @@ function FlowEditorContent() {
     },
     [setEdges]
   )
+
+  // Listen for edge delete events from CustomEdge
+  useEffect(() => {
+    const handleDeleteEdge = (event: CustomEvent<{ id: string }>) => {
+      setEdges((eds) => eds.filter((e) => e.id !== event.detail.id))
+      setHasUnsavedChanges(true)
+    }
+
+    window.addEventListener('deleteEdge', handleDeleteEdge as EventListener)
+    return () => {
+      window.removeEventListener('deleteEdge', handleDeleteEdge as EventListener)
+    }
+  }, [setEdges])
 
   const onDragOver = useCallback((event: React.DragEvent) => {
     event.preventDefault()
@@ -300,53 +327,87 @@ function FlowEditorContent() {
   const statusConfig = getStatusConfig(flow.status)
 
   return (
-    <div className="h-screen flex flex-col">
+    <div className="h-screen flex flex-col bg-gray-50 dark:bg-zinc-950">
       {/* Header */}
-      <div className="h-14 border-b flex items-center justify-between px-4 bg-background">
-        <div className="flex items-center gap-4">
-          <Button variant="ghost" size="sm" onClick={() => navigate('/flows')}>
+      <div className="h-16 border-b border-gray-200 dark:border-zinc-800 flex items-center justify-between px-6 bg-white dark:bg-zinc-900 shadow-sm">
+        <div className="flex items-center gap-6">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={() => navigate('/flows')}
+            className="text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
+          >
             <ArrowLeft className="h-4 w-4 mr-2" />
             Voltar
           </Button>
-          <div className="flex items-center gap-2">
-            <h1 className="font-semibold">{flow.name}</h1>
-            <Badge variant={statusConfig.variant as any}>{statusConfig.label}</Badge>
+
+          <div className="h-6 w-px bg-gray-200 dark:bg-zinc-700" />
+
+          <div className="flex items-center gap-3">
+            <h1 className="font-semibold text-gray-900 dark:text-white">{flow.name}</h1>
+            <Badge
+              variant={statusConfig.variant as any}
+              className={
+                flow.status === 'ACTIVE'
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/30 dark:text-emerald-400 border-0'
+                  : flow.status === 'INACTIVE'
+                  ? 'bg-gray-100 text-gray-600 dark:bg-zinc-800 dark:text-gray-400 border-0'
+                  : 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400 border-0'
+              }
+            >
+              {statusConfig.label}
+            </Badge>
             {hasUnsavedChanges && (
-              <Badge variant="outline" className="text-yellow-600">
-                Nao salvo
+              <Badge className="bg-amber-50 text-amber-600 dark:bg-amber-900/20 dark:text-amber-400 border border-amber-200 dark:border-amber-800">
+                Alteracoes nao salvas
               </Badge>
             )}
           </div>
         </div>
-        <div className="flex items-center gap-2">
+
+        <div className="flex items-center gap-3">
           {selectedNode && selectedNode.type !== 'START' && (
-            <Button variant="outline" size="sm" onClick={deleteSelectedNode}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={deleteSelectedNode}
+              className="text-red-600 border-red-200 hover:bg-red-50 hover:border-red-300 dark:border-red-800 dark:hover:bg-red-900/20"
+            >
               <Trash2 className="h-4 w-4 mr-2" />
-              Excluir Node
+              Excluir
             </Button>
           )}
-          <Button variant="outline" size="sm" onClick={() => setSettingsOpen(true)}>
-            <Settings className="h-4 w-4 mr-2" />
-            Configuracoes
-          </Button>
+
           <Button
             variant="outline"
             size="sm"
+            onClick={() => setSettingsOpen(true)}
+            className="border-gray-200 dark:border-zinc-700"
+          >
+            <Settings className="h-4 w-4 mr-2" />
+            Configuracoes
+          </Button>
+
+          <Button
+            size="sm"
             onClick={() => saveMutation.mutate()}
             disabled={saveMutation.isPending}
+            className="bg-emerald-500 hover:bg-emerald-600 text-white shadow-sm"
           >
             {saveMutation.isPending ? (
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
             ) : (
               <Save className="h-4 w-4 mr-2" />
             )}
-            Salvar
+            Salvar Layout
           </Button>
+
           {flow.status === 'ACTIVE' ? (
             <Button
               variant="outline"
               size="sm"
               onClick={() => toggleStatusMutation.mutate('INACTIVE')}
+              className="border-gray-200 dark:border-zinc-700"
             >
               <Pause className="h-4 w-4 mr-2" />
               Desativar
@@ -355,6 +416,7 @@ function FlowEditorContent() {
             <Button
               size="sm"
               onClick={() => toggleStatusMutation.mutate('ACTIVE')}
+              className="bg-purple-500 hover:bg-purple-600 text-white shadow-sm"
             >
               <Play className="h-4 w-4 mr-2" />
               Ativar
@@ -364,10 +426,10 @@ function FlowEditorContent() {
       </div>
 
       {/* Editor */}
-      <div className="flex-1 flex">
+      <div className="flex-1 flex overflow-hidden">
         <NodesSidebar />
 
-        <div className="flex-1" ref={reactFlowWrapper}>
+        <div className="flex-1 relative" ref={reactFlowWrapper}>
           <ReactFlow
             nodes={nodes}
             edges={edges}
@@ -388,16 +450,28 @@ function FlowEditorContent() {
             onNodeClick={onNodeClick}
             onPaneClick={onPaneClick}
             nodeTypes={nodeTypes}
+            edgeTypes={edgeTypes}
             fitView
             snapToGrid
             snapGrid={[15, 15]}
             defaultEdgeOptions={{
-              animated: true,
-              style: { stroke: '#6366f1', strokeWidth: 2 },
+              type: 'custom',
+              animated: false,
+              style: { stroke: '#8b5cf6', strokeWidth: 2 },
             }}
+            className="bg-gray-100 dark:bg-zinc-950"
           >
-            <Controls />
-            <Background variant={BackgroundVariant.Dots} gap={15} size={1} />
+            <Controls
+              className="bg-white dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700 rounded-lg shadow-lg"
+              showInteractive={false}
+            />
+            <Background
+              variant={BackgroundVariant.Dots}
+              gap={20}
+              size={1.5}
+              color="#d1d5db"
+              className="dark:opacity-20"
+            />
           </ReactFlow>
         </div>
 
@@ -406,6 +480,7 @@ function FlowEditorContent() {
             node={selectedNode}
             onUpdate={updateNodeData}
             onClose={() => setSelectedNode(null)}
+            allNodes={nodes}
           />
         )}
       </div>
@@ -485,6 +560,36 @@ function FlowEditorContent() {
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Tempo de inatividade (minutos)</Label>
+              <Input
+                type="number"
+                min={1}
+                max={60}
+                value={flowSettings.inactivityTimeout}
+                onChange={(e) =>
+                  setFlowSettings({ ...flowSettings, inactivityTimeout: parseInt(e.target.value) || 5 })
+                }
+                placeholder="5"
+              />
+              <p className="text-xs text-gray-500">
+                Encerra a sessao do fluxo automaticamente apos esse tempo sem interacao.
+              </p>
+            </div>
+            <div className="space-y-2">
+              <Label>Mensagem de encerramento</Label>
+              <Textarea
+                value={flowSettings.timeoutMessage}
+                onChange={(e) =>
+                  setFlowSettings({ ...flowSettings, timeoutMessage: e.target.value })
+                }
+                placeholder="Sessao encerrada por inatividade..."
+                rows={3}
+              />
+              <p className="text-xs text-gray-500">
+                Mensagem enviada ao usuario quando o fluxo e encerrado por inatividade.
+              </p>
             </div>
           </div>
           <DialogFooter>

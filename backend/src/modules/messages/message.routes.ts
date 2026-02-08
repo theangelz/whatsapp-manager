@@ -6,6 +6,7 @@ import { authMiddleware, apiTokenMiddleware } from '../../middlewares/auth.middl
 import { baileysManager } from '../../server.js'
 import { CloudAPIProvider } from '../../providers/cloud-api/cloud-api.provider.js'
 import { isSystemOperational } from '../../core/core.wpp.js'
+import { checkRateLimit } from '../../middlewares/rate-limit.middleware.js'
 
 // Verificacao de sistema integrada
 const _v = () => { if (!isSystemOperational()) throw new Error('Sistema indisponivel') }
@@ -68,6 +69,45 @@ const sendInvoiceSchema = z.object({
   dueDate: z.string(),
   pixCode: z.string(),
   boletoCode: z.string().optional(),
+})
+
+// Schema para template fora_do_horario (formato simplificado)
+const foraDoHorarioSchema = z.object({
+  To: z.string().min(10),
+  Nome: z.string(),
+  Telefone: z.string(),
+  CPF: z.string(),
+  Assiante: z.string(),
+  setor: z.string(),
+})
+
+const sendButtonsSchema = z.object({
+  instanceId: z.string().uuid().optional(),
+  to: z.string().min(10),
+  text: z.string().min(1),
+  buttons: z.array(z.object({
+    id: z.string(),
+    text: z.string().max(20),
+  })).min(1).max(3),
+  footer: z.string().optional(),
+  header: z.string().optional(),
+})
+
+const sendListSchema = z.object({
+  instanceId: z.string().uuid().optional(),
+  to: z.string().min(10),
+  text: z.string().min(1),
+  buttonText: z.string().default('Menu'),
+  sections: z.array(z.object({
+    title: z.string(),
+    rows: z.array(z.object({
+      id: z.string(),
+      title: z.string().max(24),
+      description: z.string().optional(),
+    })).min(1),
+  })).min(1),
+  footer: z.string().optional(),
+  header: z.string().optional(),
 })
 
 const sendGroupSchema = z.object({
@@ -263,10 +303,75 @@ export async function messageRoutes(fastify: FastifyInstance) {
           const result = await baileysManager.sendTextMessage(instance.id, data.to, data.text)
           return reply.send({ success: true, messageId: result?.key.id })
         } else {
+          // Cloud API ou Coexistence - verificar rate limit
+          if (instance.channel === 'COEXISTENCE') {
+            const rateLimitResult = await checkRateLimit(instance.id)
+            if (!rateLimitResult.allowed) {
+              return reply.status(429).send({
+                error: 'Rate limit exceeded (20 MPS for Coexistence)',
+                retryAfterMs: rateLimitResult.retryAfterMs,
+                limit: rateLimitResult.limit
+              })
+            }
+          }
           const cloudApi = new CloudAPIProvider(instance)
           const result = await cloudApi.sendTextMessage(data.to, data.text)
           return reply.send({ success: true, messageId: result.messages?.[0]?.id })
         }
+      } catch (error: any) {
+        return reply.status(500).send({ error: error.message })
+      }
+    })
+
+    // Send interactive buttons (authenticated) - Uses NativeFlowMessage format
+    app.post('/send-buttons', async (request: FastifyRequest, reply: FastifyReply) => {
+      try { _v() } catch (e: any) { return reply.status(503).send({ error: e.message }) }
+      const data = sendButtonsSchema.parse(request.body)
+
+      if (!data.instanceId) {
+        return reply.status(400).send({ error: 'instanceId is required' })
+      }
+
+      const instance = await prisma.instance.findFirst({
+        where: { id: data.instanceId, companyId: request.user.companyId, isActive: true },
+      })
+
+      if (!instance) return reply.status(404).send({ error: 'Instance not found' })
+      if (instance.status !== 'CONNECTED') return reply.status(400).send({ error: 'Instance is not connected' })
+      if (instance.channel !== 'BAILEYS') return reply.status(400).send({ error: 'Interactive buttons via Baileys only. Use Cloud API templates for CLOUD_API instances.' })
+
+      try {
+        const result = await baileysManager.sendInteractiveButtons(
+          instance.id, data.to, data.text, data.buttons, data.footer, data.header
+        )
+        return reply.send({ success: true, messageId: result?.key.id })
+      } catch (error: any) {
+        return reply.status(500).send({ error: error.message })
+      }
+    })
+
+    // Send interactive list (authenticated) - Uses NativeFlowMessage format
+    app.post('/send-list', async (request: FastifyRequest, reply: FastifyReply) => {
+      try { _v() } catch (e: any) { return reply.status(503).send({ error: e.message }) }
+      const data = sendListSchema.parse(request.body)
+
+      if (!data.instanceId) {
+        return reply.status(400).send({ error: 'instanceId is required' })
+      }
+
+      const instance = await prisma.instance.findFirst({
+        where: { id: data.instanceId, companyId: request.user.companyId, isActive: true },
+      })
+
+      if (!instance) return reply.status(404).send({ error: 'Instance not found' })
+      if (instance.status !== 'CONNECTED') return reply.status(400).send({ error: 'Instance is not connected' })
+      if (instance.channel !== 'BAILEYS') return reply.status(400).send({ error: 'Interactive lists via Baileys only.' })
+
+      try {
+        const result = await baileysManager.sendInteractiveList(
+          instance.id, data.to, data.text, data.buttonText, data.sections, data.footer, data.header
+        )
+        return reply.send({ success: true, messageId: result?.key.id })
       } catch (error: any) {
         return reply.status(500).send({ error: error.message })
       }
@@ -305,6 +410,17 @@ export async function messageRoutes(fastify: FastifyInstance) {
           )
           return reply.send({ success: true, messageId: result?.key.id })
         } else {
+          // Cloud API ou Coexistence - verificar rate limit
+          if (instance.channel === 'COEXISTENCE') {
+            const rateLimitResult = await checkRateLimit(instance.id)
+            if (!rateLimitResult.allowed) {
+              return reply.status(429).send({
+                error: 'Rate limit exceeded (20 MPS for Coexistence)',
+                retryAfterMs: rateLimitResult.retryAfterMs,
+                limit: rateLimitResult.limit
+              })
+            }
+          }
           const cloudApi = new CloudAPIProvider(instance)
           const result = await cloudApi.sendMediaMessage(data.to, data.mediaType, data.mediaUrl, data.caption)
           return reply.send({ success: true, messageId: result.messages?.[0]?.id })
@@ -321,6 +437,9 @@ export async function messageRoutes(fastify: FastifyInstance) {
 
     // Send text via API token
     app.post('/api/send', async (request: FastifyRequest, reply: FastifyReply) => {
+      // DEBUG: Log request body to file
+      const fs = await import('fs')
+      fs.appendFileSync('/tmp/debug-api.log', `[${new Date().toISOString()}] Body: ${JSON.stringify(request.body)}\n`)
       const data = sendTextSchema.parse(request.body)
       const instance = request.instance!
 
@@ -335,6 +454,18 @@ export async function messageRoutes(fastify: FastifyInstance) {
           const result = await baileysManager.sendTextMessage(instance.id, data.to, data.text)
           messageId = result?.key.id || undefined
         } else {
+          // Cloud API ou Coexistence - verificar rate limit para Coexistence
+          if (instance.channel === 'COEXISTENCE') {
+            const rateLimitResult = await checkRateLimit(instance.id)
+            if (!rateLimitResult.allowed) {
+              return reply.status(429).send({
+                error: 'Rate limit exceeded (20 MPS for Coexistence)',
+                retryAfterMs: rateLimitResult.retryAfterMs,
+                limit: rateLimitResult.limit
+              })
+            }
+          }
+
           const fullInstance = await prisma.instance.findUnique({ where: { id: instance.id } })
 
           if (!fullInstance) {
@@ -351,7 +482,7 @@ export async function messageRoutes(fastify: FastifyInstance) {
           const result = await cloudApi.sendTextMessage(data.to, data.text)
           messageId = result.messages?.[0]?.id
 
-          // Disparar webhook para Cloud API
+          // Disparar webhook para Cloud API / Coexistence
           await triggerSendWebhook(fullInstance, {
             to: data.to,
             content: data.text,
@@ -364,6 +495,42 @@ export async function messageRoutes(fastify: FastifyInstance) {
       } catch (error: any) {
         console.error('API send error:', error)
         return reply.status(500).send({ error: error.message || 'Error sending message' })
+      }
+    })
+
+    // Send interactive buttons via API token
+    app.post('/api/send-buttons', async (request: FastifyRequest, reply: FastifyReply) => {
+      const data = sendButtonsSchema.parse(request.body)
+      const instance = request.instance!
+
+      if (instance.status !== 'CONNECTED') return reply.status(400).send({ error: 'Instance is not connected' })
+      if (instance.channel !== 'BAILEYS') return reply.status(400).send({ error: 'Interactive buttons via Baileys only' })
+
+      try {
+        const result = await baileysManager.sendInteractiveButtons(
+          instance.id, data.to, data.text, data.buttons, data.footer, data.header
+        )
+        return reply.send({ success: true, messageId: result?.key.id })
+      } catch (error: any) {
+        return reply.status(500).send({ error: error.message })
+      }
+    })
+
+    // Send interactive list via API token
+    app.post('/api/send-list', async (request: FastifyRequest, reply: FastifyReply) => {
+      const data = sendListSchema.parse(request.body)
+      const instance = request.instance!
+
+      if (instance.status !== 'CONNECTED') return reply.status(400).send({ error: 'Instance is not connected' })
+      if (instance.channel !== 'BAILEYS') return reply.status(400).send({ error: 'Interactive lists via Baileys only' })
+
+      try {
+        const result = await baileysManager.sendInteractiveList(
+          instance.id, data.to, data.text, data.buttonText, data.sections, data.footer, data.header
+        )
+        return reply.send({ success: true, messageId: result?.key.id })
+      } catch (error: any) {
+        return reply.status(500).send({ error: error.message })
       }
     })
 
@@ -388,6 +555,18 @@ export async function messageRoutes(fastify: FastifyInstance) {
           )
           return reply.send({ success: true, messageId: result?.key.id })
         } else {
+          // Cloud API ou Coexistence - verificar rate limit para Coexistence
+          if (instance.channel === 'COEXISTENCE') {
+            const rateLimitResult = await checkRateLimit(instance.id)
+            if (!rateLimitResult.allowed) {
+              return reply.status(429).send({
+                error: 'Rate limit exceeded (20 MPS for Coexistence)',
+                retryAfterMs: rateLimitResult.retryAfterMs,
+                limit: rateLimitResult.limit
+              })
+            }
+          }
+
           const fullInstance = await prisma.instance.findUnique({ where: { id: instance.id } })
 
           if (!fullInstance) {
@@ -415,8 +594,20 @@ export async function messageRoutes(fastify: FastifyInstance) {
       const data = sendTemplateSchema.parse(request.body)
       const instance = request.instance!
 
-      if (instance.channel !== 'CLOUD_API') {
-        return reply.status(400).send({ error: 'Templates are only available for Cloud API instances' })
+      if (instance.channel !== 'CLOUD_API' && instance.channel !== 'COEXISTENCE') {
+        return reply.status(400).send({ error: 'Templates are only available for Cloud API or Coexistence instances' })
+      }
+
+      // Rate limit check para Coexistence
+      if (instance.channel === 'COEXISTENCE') {
+        const rateLimitResult = await checkRateLimit(instance.id)
+        if (!rateLimitResult.allowed) {
+          return reply.status(429).send({
+            error: 'Rate limit exceeded (20 MPS for Coexistence)',
+            retryAfterMs: rateLimitResult.retryAfterMs,
+            limit: rateLimitResult.limit
+          })
+        }
       }
 
       try {
@@ -446,8 +637,20 @@ export async function messageRoutes(fastify: FastifyInstance) {
       const data = sendInvoiceSchema.parse(request.body)
       const instance = request.instance!
 
-      if (instance.channel !== 'CLOUD_API') {
-        return reply.status(400).send({ error: 'Invoice templates are only available for Cloud API instances' })
+      if (instance.channel !== 'CLOUD_API' && instance.channel !== 'COEXISTENCE') {
+        return reply.status(400).send({ error: 'Invoice templates are only available for Cloud API or Coexistence instances' })
+      }
+
+      // Rate limit check para Coexistence
+      if (instance.channel === 'COEXISTENCE') {
+        const rateLimitResult = await checkRateLimit(instance.id)
+        if (!rateLimitResult.allowed) {
+          return reply.status(429).send({
+            error: 'Rate limit exceeded (20 MPS for Coexistence)',
+            retryAfterMs: rateLimitResult.retryAfterMs,
+            limit: rateLimitResult.limit
+          })
+        }
       }
 
       try {

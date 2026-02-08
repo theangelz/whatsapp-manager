@@ -86,6 +86,9 @@ async function sendCloudApiMessage(instance: any, to: string, content: any, type
 }
 
 export async function webhookRoutes(fastify: FastifyInstance) {
+  // Chatwoot webhook handler
+  await handleChatwootWebhook(fastify)
+
   // Meta Cloud API Webhook Verification
   fastify.get('/cloud', async (request: FastifyRequest<{ Querystring: { 'hub.mode'?: string; 'hub.verify_token'?: string; 'hub.challenge'?: string } }>, reply: FastifyReply) => {
     const mode = request.query['hub.mode']
@@ -256,6 +259,27 @@ export async function webhookRoutes(fastify: FastifyInstance) {
             data: { messagesReceived: { increment: 1 } },
           })
 
+          // Update contact's lastInboundAt for 24h window tracking
+          if (instance.companyId && from) {
+            await prisma.contact.upsert({
+              where: {
+                companyId_phoneNumber: {
+                  companyId: instance.companyId,
+                  phoneNumber: from,
+                },
+              },
+              update: {
+                lastInboundAt: new Date(),
+              },
+              create: {
+                companyId: instance.companyId,
+                phoneNumber: from,
+                name: from,
+                lastInboundAt: new Date(),
+              },
+            })
+          }
+
           // Emit to socket
           io.to(`instance:${instance.id}`).emit('message-received', {
             instanceId: instance.id,
@@ -367,9 +391,9 @@ export async function webhookRoutes(fastify: FastifyInstance) {
         const value = change.value
         const phoneNumberId = value.metadata?.phone_number_id
 
-        // Find instance by phone number ID
+        // Find instance by phone number ID (Cloud API or Coexistence)
         const instance = await prisma.instance.findFirst({
-          where: { phoneNumberId, channel: 'CLOUD_API', isActive: true },
+          where: { phoneNumberId, channel: { in: ['CLOUD_API', 'COEXISTENCE'] }, isActive: true },
           include: {
             typebotIntegration: true,
             n8nIntegration: true,
@@ -427,6 +451,27 @@ export async function webhookRoutes(fastify: FastifyInstance) {
             data: { messagesReceived: { increment: 1 } },
           })
 
+          // Update contact's lastInboundAt for 24h window tracking
+          if (instance.companyId && from) {
+            await prisma.contact.upsert({
+              where: {
+                companyId_phoneNumber: {
+                  companyId: instance.companyId,
+                  phoneNumber: from,
+                },
+              },
+              update: {
+                lastInboundAt: new Date(),
+              },
+              create: {
+                companyId: instance.companyId,
+                phoneNumber: from,
+                name: from,
+                lastInboundAt: new Date(),
+              },
+            })
+          }
+
           // Emit to socket
           io.to(`instance:${instance.id}`).emit('message-received', {
             instanceId: instance.id,
@@ -473,6 +518,86 @@ export async function webhookRoutes(fastify: FastifyInstance) {
     }
 
     return reply.send({ status: 'ok' })
+  })
+}
+
+/**
+ * Chatwoot Webhook - receives message_created events from Chatwoot
+ * Used to update the 24h window (lastInboundAt) when customer sends a message
+ *
+ * Chatwoot webhook format:
+ * {
+ *   "event": "message_created",
+ *   "message_type": "incoming",
+ *   "content": "message text",
+ *   "conversation": { "meta": { "sender": { "phone_number": "+5521..." } } },
+ *   "sender": { "phone_number": "+5521..." }
+ * }
+ */
+async function handleChatwootWebhook(fastify: FastifyInstance) {
+  fastify.post('/chatwoot/:instanceId', async (request: FastifyRequest<{ Params: { instanceId: string } }>, reply: FastifyReply) => {
+    const { instanceId } = request.params
+    const body = request.body as any
+
+    console.log('[Chatwoot Webhook] Received:', JSON.stringify(body, null, 2))
+
+    // Find instance
+    const instance = await prisma.instance.findUnique({
+      where: { id: instanceId },
+    })
+
+    if (!instance) {
+      console.log('[Chatwoot Webhook] Instance not found:', instanceId)
+      return reply.status(404).send({ error: 'Instance not found' })
+    }
+
+    // Only process incoming messages
+    if (body.event !== 'message_created' || body.message_type !== 'incoming') {
+      return reply.send({ status: 'ignored', reason: 'Not an incoming message' })
+    }
+
+    // Extract phone number from various possible locations in Chatwoot payload
+    let phoneNumber = body.sender?.phone_number ||
+                      body.conversation?.meta?.sender?.phone_number ||
+                      body.contact?.phone_number ||
+                      body.sender?.identifier
+
+    if (!phoneNumber) {
+      console.log('[Chatwoot Webhook] No phone number found in payload')
+      return reply.status(400).send({ error: 'No phone number in payload' })
+    }
+
+    // Clean phone number (remove +, spaces, etc)
+    phoneNumber = phoneNumber.replace(/\D/g, '')
+
+    console.log(`[Chatwoot Webhook] Updating window for ${phoneNumber}`)
+
+    // Update contact's lastInboundAt for 24h window tracking
+    try {
+      await prisma.contact.upsert({
+        where: {
+          companyId_phoneNumber: {
+            companyId: instance.companyId,
+            phoneNumber: phoneNumber,
+          },
+        },
+        update: {
+          lastInboundAt: new Date(),
+        },
+        create: {
+          companyId: instance.companyId,
+          phoneNumber: phoneNumber,
+          name: body.sender?.name || body.contact?.name || phoneNumber,
+          lastInboundAt: new Date(),
+        },
+      })
+
+      console.log(`[Chatwoot Webhook] Window updated for ${phoneNumber}`)
+      return reply.send({ status: 'ok', phoneNumber, windowUpdated: true })
+    } catch (error: any) {
+      console.error('[Chatwoot Webhook] Error updating contact:', error)
+      return reply.status(500).send({ error: error.message })
+    }
   })
 }
 

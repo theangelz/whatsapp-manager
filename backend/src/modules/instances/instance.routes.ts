@@ -1,16 +1,19 @@
 import { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify'
 import { z } from 'zod'
 import { v4 as uuid } from 'uuid'
+import axios from 'axios'
 import { prisma } from '../../config/database.js'
+import { env } from '../../config/env.js'
 import { authMiddleware } from '../../middlewares/auth.middleware.js'
 import { baileysManager } from '../../server.js'
 import { CloudAPIProvider } from '../../providers/cloud-api/cloud-api.provider.js'
 import { prepareInstanceConnection, getWppSystemStatus } from '../../core/core.wpp.js'
+import { getRateLimitInfo } from '../../middlewares/rate-limit.middleware.js'
 
 const createInstanceSchema = z.object({
   name: z.string().min(2),
   description: z.string().optional(),
-  channel: z.enum(['BAILEYS', 'CLOUD_API']).default('BAILEYS'),
+  channel: z.enum(['BAILEYS', 'CLOUD_API', 'COEXISTENCE']).default('BAILEYS'),
   webhookUrl: z.string().url().optional(),
   webhookEvents: z.array(z.string()).optional(),
   // Cloud API fields
@@ -37,6 +40,13 @@ const cloudApiConfigSchema = z.object({
   phoneNumberId: z.string().min(1),
   accessToken: z.string().min(1),
   webhookSecret: z.string().optional(),
+})
+
+// Schema para Embedded Signup (Coexistence)
+const embeddedSignupSchema = z.object({
+  code: z.string().min(1),
+  wabaId: z.string().optional(),
+  phoneNumberId: z.string().optional(),
 })
 
 export async function instanceRoutes(fastify: FastifyInstance) {
@@ -88,9 +98,9 @@ export async function instanceRoutes(fastify: FastifyInstance) {
       orderBy: { createdAt: 'desc' },
     })
 
-    // If system is blocked, override Cloud API status to DISCONNECTED
+    // If system is blocked, override Cloud API/Coexistence status to DISCONNECTED
     const processedInstances = instances.map(inst => {
-      if (!systemStatus.operational && inst.channel === 'CLOUD_API' && inst.status === 'CONNECTED') {
+      if (!systemStatus.operational && (inst.channel === 'CLOUD_API' || inst.channel === 'COEXISTENCE') && inst.status === 'CONNECTED') {
         return { ...inst, status: 'DISCONNECTED', _systemBlocked: true }
       }
       return inst
@@ -178,8 +188,8 @@ export async function instanceRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: 'Instance not found' })
     }
 
-    if (instance.channel !== 'CLOUD_API') {
-      return reply.status(400).send({ error: 'This configuration is only for Cloud API instances' })
+    if (instance.channel !== 'CLOUD_API' && instance.channel !== 'COEXISTENCE') {
+      return reply.status(400).send({ error: 'This configuration is only for Cloud API or Coexistence instances' })
     }
 
     // Try to fetch phone number info from Meta
@@ -226,8 +236,8 @@ export async function instanceRoutes(fastify: FastifyInstance) {
       return reply.status(404).send({ error: 'Instance not found' })
     }
 
-    if (instance.channel !== 'CLOUD_API') {
-      return reply.status(400).send({ error: 'Templates sync is only for Cloud API instances' })
+    if (instance.channel !== 'CLOUD_API' && instance.channel !== 'COEXISTENCE') {
+      return reply.status(400).send({ error: 'Templates sync is only for Cloud API or Coexistence instances' })
     }
 
     if (!instance.wabaId || !instance.accessToken) {
@@ -531,6 +541,126 @@ export async function instanceRoutes(fastify: FastifyInstance) {
       return reply.send(group)
     } catch (error: any) {
       return reply.status(500).send({ error: error.message })
+    }
+  })
+
+  // Get rate limit info (useful for Coexistence instances)
+  fastify.get('/:id/rate-limit-info', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const { id } = request.params
+
+    const instance = await prisma.instance.findFirst({
+      where: { id, companyId: request.user.companyId },
+    })
+
+    if (!instance) {
+      return reply.status(404).send({ error: 'Instance not found' })
+    }
+
+    try {
+      const rateLimitInfo = await getRateLimitInfo(id)
+      return reply.send(rateLimitInfo)
+    } catch (error: any) {
+      return reply.status(500).send({ error: error.message })
+    }
+  })
+
+  // Embedded Signup for Coexistence (receives OAuth code and exchanges for access_token)
+  fastify.post('/:id/embedded-signup', async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
+    const { id } = request.params
+    const data = embeddedSignupSchema.parse(request.body)
+
+    // 1. Validate instance belongs to user and is COEXISTENCE type
+    const instance = await prisma.instance.findFirst({
+      where: { id, companyId: request.user.companyId },
+    })
+
+    if (!instance) {
+      return reply.status(404).send({ error: 'Instance not found' })
+    }
+
+    if (instance.channel !== 'COEXISTENCE') {
+      return reply.status(400).send({ error: 'This endpoint is only for Coexistence instances' })
+    }
+
+    // 2. Validate Meta credentials are configured
+    if (!env.META_APP_ID || !env.META_APP_SECRET) {
+      return reply.status(500).send({ error: 'Meta App credentials not configured on server' })
+    }
+
+    try {
+      // 3. Exchange code for access_token
+      console.log('[Embedded Signup] Exchanging code for access_token...')
+      const tokenResponse = await axios.get(
+        `https://graph.facebook.com/${env.META_API_VERSION}/oauth/access_token`,
+        {
+          params: {
+            client_id: env.META_APP_ID,
+            client_secret: env.META_APP_SECRET,
+            code: data.code,
+          },
+        }
+      )
+
+      const accessToken = tokenResponse.data.access_token
+      if (!accessToken) {
+        console.error('[Embedded Signup] No access_token in response:', tokenResponse.data)
+        return reply.status(400).send({ error: 'Failed to get access token from Meta' })
+      }
+
+      console.log('[Embedded Signup] Access token obtained successfully')
+
+      // 4. Get phone number info from Meta (if phoneNumberId provided)
+      let phoneNumber: string | null = null
+      let profileName: string | null = null
+      let wabaId = data.wabaId || null
+      let phoneNumberId = data.phoneNumberId || null
+
+      if (phoneNumberId) {
+        try {
+          const cloudApi = new CloudAPIProvider({
+            phoneNumberId,
+            accessToken,
+          })
+          const phoneInfo = await cloudApi.getPhoneNumberInfo()
+          phoneNumber = phoneInfo.display_phone_number?.replace(/\D/g, '') || null
+          profileName = phoneInfo.verified_name || null
+          console.log('[Embedded Signup] Phone info:', { phoneNumber, profileName })
+        } catch (phoneError: any) {
+          console.error('[Embedded Signup] Error fetching phone info:', phoneError.message)
+          // Continue anyway - we have the token
+        }
+      }
+
+      // 5. Update instance with credentials
+      const updated = await prisma.instance.update({
+        where: { id },
+        data: {
+          wabaId,
+          phoneNumberId,
+          accessToken,
+          phoneNumber,
+          profileName,
+          status: 'CONNECTED',
+        },
+      })
+
+      console.log('[Embedded Signup] Instance updated successfully:', updated.id)
+
+      return reply.send({
+        success: true,
+        message: 'Coexistence connected successfully',
+        instance: {
+          id: updated.id,
+          name: updated.name,
+          status: updated.status,
+          phoneNumber: updated.phoneNumber,
+          profileName: updated.profileName,
+        },
+      })
+    } catch (error: any) {
+      console.error('[Embedded Signup] Error:', error.response?.data || error.message)
+      const errorMessage = error.response?.data?.error?.message || error.message || 'Failed to complete embedded signup'
+      return reply.status(500).send({ error: errorMessage })
     }
   })
 }

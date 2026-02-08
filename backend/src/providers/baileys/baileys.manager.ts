@@ -7,6 +7,7 @@ import makeWASocket, {
   ConnectionState,
   proto,
   WAMessageKey,
+  generateWAMessageFromContent,
 } from '@whiskeysockets/baileys'
 import { Boom } from '@hapi/boom'
 import { Server } from 'socket.io'
@@ -151,12 +152,10 @@ export class BaileysManager {
           await baileysInstance.socket.sendMessage(jid, content)
           break
         case 'buttons':
-          // Baileys buttons format
-          await baileysInstance.socket.sendMessage(jid, content)
+          await this.sendButtonsMessage(baileysInstance.socket, jid, content)
           break
         case 'list':
-          // Baileys list format
-          await baileysInstance.socket.sendMessage(jid, content)
+          await this.sendListMessage(baileysInstance.socket, jid, content)
           break
         default:
           await baileysInstance.socket.sendMessage(jid, { text: content.text || String(content) })
@@ -399,6 +398,28 @@ export class BaileysManager {
         content = msg.message.listResponseMessage.title || ''
         listRowId = msg.message.listResponseMessage.singleSelectReply?.selectedRowId || undefined
         type = 'list_reply'
+      } else if (msg.message.interactiveResponseMessage) {
+        // Interactive response (NativeFlow buttons/lists)
+        const nativeFlow = msg.message.interactiveResponseMessage.nativeFlowResponseMessage
+        if (nativeFlow?.paramsJson) {
+          try {
+            const params = JSON.parse(nativeFlow.paramsJson)
+            if (nativeFlow.name === 'quick_reply') {
+              content = params.display_text || ''
+              buttonId = params.id || undefined
+              type = 'button_reply'
+            } else {
+              // single_select (list response)
+              content = params.title || params.display_text || ''
+              listRowId = params.id || undefined
+              type = 'list_reply'
+            }
+          } catch {
+            content = msg.message.interactiveResponseMessage.body?.text || ''
+          }
+        } else {
+          content = msg.message.interactiveResponseMessage.body?.text || ''
+        }
       } else if (msg.message.imageMessage) {
         content = msg.message.imageMessage.caption || '[Image]'
         type = 'image'
@@ -433,6 +454,27 @@ export class BaileysManager {
         data: { messagesReceived: { increment: 1 } },
       })
 
+      // Update contact's lastInboundAt for 24h window tracking
+      if (instance.companyId && phoneNumber) {
+        await prisma.contact.upsert({
+          where: {
+            companyId_phoneNumber: {
+              companyId: instance.companyId,
+              phoneNumber: phoneNumber,
+            },
+          },
+          update: {
+            lastInboundAt: new Date(),
+          },
+          create: {
+            companyId: instance.companyId,
+            phoneNumber: phoneNumber,
+            name: phoneNumber,
+            lastInboundAt: new Date(),
+          },
+        })
+      }
+
       // Emit to socket
       this.io.to(`instance:${instanceId}`).emit('message-received', {
         instanceId,
@@ -464,6 +506,7 @@ export class BaileysManager {
             messageType: type,
             buttonId,
             listRowId,
+            pushName: msg.pushName || '', // Nome do contato no WhatsApp
           })
 
           // Restore original
@@ -624,6 +667,266 @@ export class BaileysManager {
         status: 'PENDING',
         type: mediaType,
         content: caption || `[${mediaType}]`,
+      },
+    })
+
+    await prisma.instance.update({
+      where: { id: instanceId },
+      data: { messagesSent: { increment: 1 } },
+    })
+
+    return result || null
+  }
+
+  // Send buttons using InteractiveMessage + NativeFlowMessage (modern format that works)
+  private async sendButtonsMessage(
+    socket: WASocket,
+    jid: string,
+    content: { text: string; buttons: Array<{ buttonId: string; buttonText: { displayText: string } }>; footer?: string; header?: string }
+  ): Promise<proto.WebMessageInfo | undefined> {
+    const nativeButtons = content.buttons.slice(0, 3).map(btn => ({
+      name: 'quick_reply',
+      buttonParamsJson: JSON.stringify({
+        display_text: btn.buttonText.displayText,
+        id: btn.buttonId,
+      }),
+    }))
+
+    const interactiveMsg: any = {
+      body: proto.Message.InteractiveMessage.Body.create({ text: content.text }),
+      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+        buttons: nativeButtons,
+      }),
+    }
+
+    if (content.footer) {
+      interactiveMsg.footer = proto.Message.InteractiveMessage.Footer.create({ text: content.footer })
+    }
+    if (content.header) {
+      interactiveMsg.header = proto.Message.InteractiveMessage.Header.create({
+        title: content.header,
+        hasMediaAttachment: false,
+      })
+    }
+
+    // Try viewOnceMessage wrapper first (most common working approach)
+    const msg = generateWAMessageFromContent(jid, {
+      viewOnceMessage: {
+        message: {
+          messageContextInfo: {
+            deviceListMetadata: {},
+            deviceListMetadataVersion: 2,
+          },
+          interactiveMessage: proto.Message.InteractiveMessage.create(interactiveMsg),
+        },
+      },
+    }, { userJid: socket.user?.id || '' })
+
+    await socket.relayMessage(jid, msg.message!, { messageId: msg.key.id! })
+    return msg
+  }
+
+  // Send buttons using direct interactiveMessage (fallback format)
+  private async sendButtonsMessageDirect(
+    socket: WASocket,
+    jid: string,
+    content: { text: string; buttons: Array<{ buttonId: string; buttonText: { displayText: string } }>; footer?: string; header?: string }
+  ): Promise<proto.WebMessageInfo | undefined> {
+    const nativeButtons = content.buttons.slice(0, 3).map(btn => ({
+      name: 'quick_reply',
+      buttonParamsJson: JSON.stringify({
+        display_text: btn.buttonText.displayText,
+        id: btn.buttonId,
+      }),
+    }))
+
+    const interactiveMsg: any = {
+      body: proto.Message.InteractiveMessage.Body.create({ text: content.text }),
+      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+        buttons: nativeButtons,
+        messageVersion: 1,
+      }),
+    }
+
+    if (content.footer) {
+      interactiveMsg.footer = proto.Message.InteractiveMessage.Footer.create({ text: content.footer })
+    }
+
+    const msg = generateWAMessageFromContent(jid, {
+      interactiveMessage: proto.Message.InteractiveMessage.create(interactiveMsg),
+    }, { userJid: socket.user?.id || '' })
+
+    await socket.relayMessage(jid, msg.message!, { messageId: msg.key.id! })
+    return msg
+  }
+
+  // Send list using InteractiveMessage + NativeFlowMessage (modern format that works)
+  private async sendListMessage(
+    socket: WASocket,
+    jid: string,
+    content: { text: string; buttonText: string; sections: Array<{ title: string; rows: Array<{ rowId: string; title: string; description?: string }> }>; footer?: string; header?: string }
+  ): Promise<proto.WebMessageInfo | undefined> {
+    const interactiveMsg: any = {
+      body: proto.Message.InteractiveMessage.Body.create({ text: content.text }),
+      nativeFlowMessage: proto.Message.InteractiveMessage.NativeFlowMessage.create({
+        buttons: [{
+          name: 'single_select',
+          buttonParamsJson: JSON.stringify({
+            title: content.buttonText,
+            sections: content.sections.map(s => ({
+              title: s.title,
+              rows: s.rows.map(r => ({
+                title: r.title,
+                description: r.description || '',
+                id: r.rowId,
+              })),
+            })),
+          }),
+        }],
+      }),
+    }
+
+    if (content.footer) {
+      interactiveMsg.footer = proto.Message.InteractiveMessage.Footer.create({ text: content.footer })
+    }
+    if (content.header) {
+      interactiveMsg.header = proto.Message.InteractiveMessage.Header.create({
+        title: content.header,
+        hasMediaAttachment: false,
+      })
+    }
+
+    const msg = generateWAMessageFromContent(jid, {
+      viewOnceMessage: {
+        message: {
+          messageContextInfo: {
+            deviceListMetadata: {},
+            deviceListMetadataVersion: 2,
+          },
+          interactiveMessage: proto.Message.InteractiveMessage.create(interactiveMsg),
+        },
+      },
+    }, { userJid: socket.user?.id || '' })
+
+    await socket.relayMessage(jid, msg.message!, { messageId: msg.key.id! })
+    return msg
+  }
+
+  // Public method: send interactive buttons via API
+  async sendInteractiveButtons(
+    instanceId: string,
+    to: string,
+    text: string,
+    buttons: Array<{ id: string; text: string }>,
+    footer?: string,
+    header?: string
+  ): Promise<proto.WebMessageInfo | null> {
+    const baileysInstance = this.instances.get(instanceId)
+    if (!baileysInstance?.socket) {
+      throw new Error('Instance not connected')
+    }
+
+    const jid = this.formatJid(to)
+
+    const content = {
+      text,
+      buttons: buttons.map(btn => ({
+        buttonId: btn.id,
+        buttonText: { displayText: btn.text },
+      })),
+      footer,
+      header,
+    }
+
+    const result = await this.sendButtonsMessage(baileysInstance.socket, jid, content)
+
+    await prisma.message.create({
+      data: {
+        instanceId,
+        remoteJid: jid,
+        messageId: result?.key.id || '',
+        direction: 'OUTBOUND',
+        status: 'PENDING',
+        type: 'text',
+        content: `[Buttons] ${text}`,
+      },
+    })
+
+    await prisma.instance.update({
+      where: { id: instanceId },
+      data: { messagesSent: { increment: 1 } },
+    })
+
+    return result || null
+  }
+
+  // Test method: send buttons with alternative format (without viewOnce)
+  async sendInteractiveButtonsDirect(
+    instanceId: string,
+    to: string,
+    text: string,
+    buttons: Array<{ id: string; text: string }>,
+    footer?: string,
+  ): Promise<proto.WebMessageInfo | null> {
+    const baileysInstance = this.instances.get(instanceId)
+    if (!baileysInstance?.socket) {
+      throw new Error('Instance not connected')
+    }
+
+    const jid = this.formatJid(to)
+
+    const content = {
+      text,
+      buttons: buttons.map(btn => ({
+        buttonId: btn.id,
+        buttonText: { displayText: btn.text },
+      })),
+      footer,
+    }
+
+    const result = await this.sendButtonsMessageDirect(baileysInstance.socket, jid, content)
+    return result || null
+  }
+
+  // Public method: send interactive list via API
+  async sendInteractiveList(
+    instanceId: string,
+    to: string,
+    text: string,
+    buttonText: string,
+    sections: Array<{ title: string; rows: Array<{ id: string; title: string; description?: string }> }>,
+    footer?: string,
+    header?: string
+  ): Promise<proto.WebMessageInfo | null> {
+    const baileysInstance = this.instances.get(instanceId)
+    if (!baileysInstance?.socket) {
+      throw new Error('Instance not connected')
+    }
+
+    const jid = this.formatJid(to)
+
+    const content = {
+      text,
+      buttonText,
+      sections: sections.map(s => ({
+        title: s.title,
+        rows: s.rows.map(r => ({ rowId: r.id, title: r.title, description: r.description })),
+      })),
+      footer,
+      header,
+    }
+
+    const result = await this.sendListMessage(baileysInstance.socket, jid, content)
+
+    await prisma.message.create({
+      data: {
+        instanceId,
+        remoteJid: jid,
+        messageId: result?.key.id || '',
+        direction: 'OUTBOUND',
+        status: 'PENDING',
+        type: 'text',
+        content: `[List] ${text}`,
       },
     })
 

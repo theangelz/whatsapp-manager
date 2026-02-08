@@ -163,6 +163,30 @@ function removeTemplateCode(message: string): string {
 }
 
 /**
+ * Check if 24h window is open for a phone number
+ * Returns true if the contact sent a message in the last 24 hours
+ */
+async function isWindowOpen(companyId: string, phoneNumber: string): Promise<boolean> {
+  const contact = await prisma.contact.findUnique({
+    where: {
+      companyId_phoneNumber: {
+        companyId,
+        phoneNumber,
+      },
+    },
+    select: { lastInboundAt: true },
+  })
+
+  if (!contact?.lastInboundAt) {
+    return false
+  }
+
+  const now = new Date()
+  const windowStart = new Date(now.getTime() - 24 * 60 * 60 * 1000) // 24h ago
+  return contact.lastInboundAt >= windowStart
+}
+
+/**
  * Parse Atlaz message to extract structured data
  * Example: "Olá Ada siqueira silva, esse é o PDF do seu boleto com vencimento em 05/02/2026. Linha digitável: 40192..."
  */
@@ -216,6 +240,10 @@ export async function automationRoutes(fastify: FastifyInstance) {
     async (request: FastifyRequest<{ Params: { token: string } }>, reply: FastifyReply) => {
       const { token } = request.params
       const payload = request.body as any
+
+      // DEBUG: Log raw payload
+      const fs = await import('fs')
+      fs.appendFileSync('/tmp/trigger-debug.log', `\n[${new Date().toISOString()}] RAW PAYLOAD:\n${JSON.stringify(payload, null, 2)}\n`)
 
       // Find automation by token
       const automation = await prisma.automation.findUnique({
@@ -518,12 +546,20 @@ export async function automationRoutes(fastify: FastifyInstance) {
               }
             }
 
+            const fs = await import('fs')
+            fs.appendFileSync('/tmp/template-debug.log', `\n[${new Date().toISOString()}] ===== TEMPLATE DEBUG =====\n`)
+            fs.appendFileSync('/tmp/template-debug.log', `phoneNumber: ${phoneNumber}\n`)
+            fs.appendFileSync('/tmp/template-debug.log', `templateName: ${automation.metaTemplateName}\n`)
+            fs.appendFileSync('/tmp/template-debug.log', `components: ${JSON.stringify(components, null, 2)}\n`)
+            fs.appendFileSync('/tmp/template-debug.log', `variables: ${JSON.stringify(variables)}\n`)
+
             const result = await cloudApi.sendTemplateMessage(
               phoneNumber,
               automation.metaTemplateName,
               automation.metaTemplateLanguage || 'pt_BR',
               components.length > 0 ? components : undefined
             )
+            fs.appendFileSync('/tmp/template-debug.log', `Meta API response: ${JSON.stringify(result)}\n`)
 
             messageId = result?.messages?.[0]?.id
             messageContent = `Template: ${automation.metaTemplateName}`
@@ -554,8 +590,23 @@ export async function automationRoutes(fastify: FastifyInstance) {
               messageId = result?.messages?.[0]?.id
               messageContent = finalBody.text?.body || JSON.stringify(finalBody).substring(0, 100)
             } else if (messageBody?.text) {
-              // Simple text message
-              messageContent = applyVariables(messageBody.text, variables)
+              // Simple text message - check for fallback condition
+              let textToUse = messageBody.text
+
+              if (messageBody.fallbackCondition && messageBody.fallbackText) {
+                const { field, invalidValues } = messageBody.fallbackCondition
+                const fieldValue = String(payload[field] || '').toLowerCase().trim()
+                const isInvalid = invalidValues.some((v: string) =>
+                  fieldValue === v.toLowerCase() || fieldValue === ''
+                )
+
+                if (isInvalid) {
+                  textToUse = messageBody.fallbackText
+                  console.log(`[FALLBACK] Campo '${field}' invalido ('${payload[field]}'), usando mensagem alternativa`)
+                }
+              }
+
+              messageContent = applyVariables(textToUse, variables)
               const result = await cloudApi.sendTextMessage(phoneNumber, messageContent)
               messageId = result?.messages?.[0]?.id
             } else {

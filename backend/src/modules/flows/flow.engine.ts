@@ -9,6 +9,7 @@ interface MessageContext {
   buttonId?: string
   listRowId?: string
   quotedMessageId?: string
+  pushName?: string // Nome do contato no WhatsApp
 }
 
 interface SendMessageFn {
@@ -39,7 +40,7 @@ export class FlowEngine {
   }
 
   async processMessage(context: MessageContext): Promise<boolean> {
-    const { instanceId, remoteJid, message, messageType, buttonId, listRowId } = context
+    const { instanceId, remoteJid, message, messageType, buttonId, listRowId, pushName } = context
 
     // Check for active session first
     let session = await this.getActiveSession(instanceId, remoteJid)
@@ -57,8 +58,13 @@ export class FlowEngine {
       return false // No flow matched
     }
 
-    // Start new flow session
-    session = await this.startSession(flow, instanceId, remoteJid)
+    // Start new flow session with initial variables
+    const initialVars = {
+      _contactName: pushName || '',
+      _contactPhone: remoteJid.replace('@s.whatsapp.net', '').replace('@g.us', ''),
+      _triggerMessage: message,
+    }
+    session = await this.startSession(flow, instanceId, remoteJid, initialVars)
     await this.executeFlow(session)
 
     return true
@@ -159,7 +165,12 @@ export class FlowEngine {
     return null
   }
 
-  private async startSession(flow: FlowWithRelations, instanceId: string, remoteJid: string): Promise<SessionWithFlow> {
+  private async startSession(
+    flow: FlowWithRelations,
+    instanceId: string,
+    remoteJid: string,
+    initialVars: Record<string, any> = {}
+  ): Promise<SessionWithFlow> {
     // End any existing active sessions for this user
     await prisma.flowSession.updateMany({
       where: {
@@ -187,7 +198,7 @@ export class FlowEngine {
       },
       update: {
         currentNodeId: startNode?.id,
-        variables: {},
+        variables: initialVars,
         context: {},
         isActive: true,
         waitingInput: false,
@@ -200,7 +211,7 @@ export class FlowEngine {
         instanceId,
         remoteJid,
         currentNodeId: startNode?.id,
-        variables: {},
+        variables: initialVars,
         context: {},
       },
       include: {
@@ -321,6 +332,9 @@ export class FlowEngine {
       case 'MESSAGE':
         const text = this.replaceVariables(data.content || '', variables)
         await this.sendMessage(session.remoteJid, { text }, 'text')
+        if (data.waitForInput) {
+          return { waitForInput: true }
+        }
         return {}
 
       case 'IMAGE':
@@ -352,16 +366,31 @@ export class FlowEngine {
         }, 'document')
         return {}
 
+      case 'MENU':
+        // Build text menu with numbered options
+        const menuOptions = data.menuOptions || []
+        let menuText = this.replaceVariables(data.content || '', variables)
+        if (menuOptions.length > 0) {
+          menuText += '\n\n'
+          menuOptions.forEach((opt: any) => {
+            menuText += `*${opt.trigger}* - ${this.replaceVariables(opt.label, variables)}\n`
+          })
+        }
+        await this.sendMessage(session.remoteJid, { text: menuText.trim() }, 'text')
+        // Save menu options in session context for later matching
+        session.context = { ...(session.context as any || {}), menuOptions }
+        return { waitForInput: true }
+
       case 'BUTTONS':
         const buttons = (data.buttons || []).map((btn: any) => ({
           buttonId: btn.id,
           buttonText: { displayText: this.replaceVariables(btn.text, variables) },
-          type: 1,
         }))
         await this.sendMessage(session.remoteJid, {
           text: this.replaceVariables(data.content || '', variables),
           buttons,
-          headerType: 1,
+          footer: data.footer ? this.replaceVariables(data.footer, variables) : undefined,
+          header: data.header ? this.replaceVariables(data.header, variables) : undefined,
         }, 'buttons')
         return { waitForInput: true }
 
@@ -382,6 +411,12 @@ export class FlowEngine {
         return { waitForInput: true }
 
       case 'CONDITION':
+        // New switch/case format with multiple cases
+        if (data.condition?.cases && data.condition.cases.length > 0) {
+          const matchedCase = this.evaluateConditionCases(data.condition, variables)
+          return { outputHandle: matchedCase }
+        }
+        // Old yes/no format (backwards compatible)
         const condResult = this.evaluateCondition(data.condition, variables)
         return { outputHandle: condResult ? 'yes' : 'no' }
 
@@ -399,11 +434,28 @@ export class FlowEngine {
 
       case 'HTTP_REQUEST':
         try {
+          console.log('[FlowEngine] HTTP_REQUEST url:', this.replaceVariables(data.httpConfig?.url || '', variables))
+          console.log('[FlowEngine] HTTP_REQUEST variables before:', Object.keys(variables).join(', '))
           const response = await this.executeHttpRequest(data.httpConfig, variables)
+          console.log('[FlowEngine] HTTP_REQUEST response:', JSON.stringify(response)?.substring(0, 500))
+
+          // Save full response if responseVariable is set (legacy)
           if (data.httpConfig?.responseVariable) {
             variables[data.httpConfig.responseVariable] = response
-            session.variables = variables
           }
+
+          // Process response mappings - extract specific fields
+          if (data.httpConfig?.responseMappings && Array.isArray(data.httpConfig.responseMappings)) {
+            for (const mapping of data.httpConfig.responseMappings) {
+              if (mapping.path && mapping.variable) {
+                const value = this.getNestedValue(response, mapping.path)
+                variables[mapping.variable] = value !== undefined ? value : null
+                console.log(`[FlowEngine] Mapped ${mapping.path} → ${mapping.variable} = ${JSON.stringify(value)?.substring(0, 200)}`)
+              }
+            }
+          }
+
+          session.variables = variables
         } catch (error) {
           console.error('HTTP request failed:', error)
         }
@@ -458,6 +510,7 @@ export class FlowEngine {
   ): Promise<string | undefined> {
     const data = node.data as Record<string, any>
     const variables = (session.variables || {}) as Record<string, any>
+    const sessionContext = (session.context || {}) as Record<string, any>
 
     // Save the user's response
     variables['_lastInput'] = context.message
@@ -465,12 +518,43 @@ export class FlowEngine {
 
     if (context.buttonId) {
       variables['_buttonId'] = context.buttonId
+      session.variables = variables
       return context.buttonId // Return button ID as output handle
     }
 
     if (context.listRowId) {
       variables['_listRowId'] = context.listRowId
+      session.variables = variables
       return context.listRowId // Return list row ID as output handle
+    }
+
+    // Handle MESSAGE node with waitForInput - save response to variable
+    if (node.type === 'MESSAGE' && data.waitForInput && data.inputVariable) {
+      variables[data.inputVariable] = context.message.trim()
+      session.variables = variables
+      return undefined
+    }
+
+    // Handle MENU node - match user input against menu options
+    if (node.type === 'MENU') {
+      const menuOptions = sessionContext.menuOptions || data.menuOptions || []
+      const userInput = context.message.trim().toLowerCase()
+
+      // Find matching option
+      const matchedOption = menuOptions.find((opt: any) =>
+        opt.trigger.toLowerCase() === userInput
+      )
+
+      if (matchedOption) {
+        variables['_menuSelection'] = matchedOption.trigger
+        variables['_menuLabel'] = matchedOption.label
+        session.variables = variables
+        return matchedOption.id // Return option ID as output handle
+      }
+
+      // No match - return fallback
+      session.variables = variables
+      return 'fallback'
     }
 
     session.variables = variables
@@ -491,6 +575,15 @@ export class FlowEngine {
     if (outputHandle) {
       const matchingEdge = edges.find(e => e.sourceHandle === outputHandle)
       if (matchingEdge) return matchingEdge.targetNodeId
+      // Also check right-side handles (right-<id> maps to same option as <id>)
+      const rightMatch = edges.find(e => e.sourceHandle === `right-${outputHandle}`)
+      if (rightMatch) return rightMatch.targetNodeId
+      // Or if outputHandle itself is a right-side handle, match the base id
+      if (outputHandle.startsWith('right-')) {
+        const baseId = outputHandle.slice(6)
+        const baseMatch = edges.find(e => e.sourceHandle === baseId)
+        if (baseMatch) return baseMatch.targetNodeId
+      }
     }
 
     // Return first edge (default path)
@@ -498,9 +591,26 @@ export class FlowEngine {
   }
 
   private replaceVariables(text: string, variables: Record<string, any>): string {
-    return text.replace(/\{\{(\w+)\}\}/g, (match, varName) => {
-      return variables[varName] !== undefined ? String(variables[varName]) : match
+    // Support both simple variables {{var}} and nested {{var.field.subfield}}
+    return text.replace(/\{\{([\w.]+)\}\}/g, (match, varPath) => {
+      const value = this.getNestedValue(variables, varPath)
+      return value !== undefined ? String(value) : match
     })
+  }
+
+  // Get nested value from object using dot notation (e.g., "data.user.name")
+  private getNestedValue(obj: any, path: string): any {
+    if (!obj || !path) return undefined
+
+    const parts = path.split('.')
+    let current = obj
+
+    for (const part of parts) {
+      if (current === null || current === undefined) return undefined
+      current = current[part]
+    }
+
+    return current
   }
 
   private evaluateCondition(
@@ -534,32 +644,96 @@ export class FlowEngine {
     }
   }
 
+  private evaluateConditionCases(
+    condition: { variable: string; operator: string; cases: Array<{ id: string; value: string }> },
+    variables: Record<string, any>
+  ): string {
+    if (!condition) return 'fallback'
+
+    const varValue = String(variables[condition.variable] ?? '')
+
+    for (const c of condition.cases) {
+      // Replace variables in case value too (e.g. {{someVar}})
+      const caseValue = this.replaceVariables(c.value || '', variables)
+
+      let matches = false
+      switch (condition.operator || 'equals') {
+        case 'equals':
+          matches = varValue.toLowerCase() === caseValue.toLowerCase()
+          break
+        case 'contains':
+          matches = varValue.toLowerCase().includes(caseValue.toLowerCase())
+          break
+        case 'startsWith':
+          matches = varValue.toLowerCase().startsWith(caseValue.toLowerCase())
+          break
+        case 'endsWith':
+          matches = varValue.toLowerCase().endsWith(caseValue.toLowerCase())
+          break
+        case 'regex':
+          try { matches = new RegExp(caseValue, 'i').test(varValue) } catch { matches = false }
+          break
+        case 'exists':
+          matches = varValue !== '' && varValue !== 'undefined'
+          break
+      }
+
+      if (matches) return c.id
+    }
+
+    return 'fallback'
+  }
+
   private async executeHttpRequest(
-    config: { method: string; url: string; headers?: Record<string, string>; body?: string },
+    config: { method: string; url: string; headers?: Array<{ key: string; value: string }> | Record<string, string>; body?: string },
     variables: Record<string, any>
   ): Promise<any> {
     const url = this.replaceVariables(config.url, variables)
-    const headers = config.headers || {}
+    const headersObj: Record<string, string> = {}
 
-    // Replace variables in headers
-    for (const key in headers) {
-      headers[key] = this.replaceVariables(headers[key], variables)
+    // Handle headers as array or object (backwards compatible)
+    if (Array.isArray(config.headers)) {
+      // New format: array of {key, value}
+      for (const header of config.headers) {
+        if (header.key) {
+          const val = this.replaceVariables(header.value || '', variables).trim()
+          const authMatch = val.match(/^(Bearer|Basic)\s+(.+)$/i)
+          headersObj[header.key.trim()] = authMatch
+            ? `${authMatch[1]} ${authMatch[2].replace(/\s+/g, '')}`
+            : val
+        }
+      }
+    } else if (config.headers) {
+      // Old format: Record<string, string>
+      for (const key in config.headers) {
+        const val = this.replaceVariables(config.headers[key], variables).trim()
+        const authMatch = val.match(/^(Bearer|Basic)\s+(.+)$/i)
+        headersObj[key.trim()] = authMatch
+          ? `${authMatch[1]} ${authMatch[2].replace(/\s+/g, '')}`
+          : val
+      }
     }
 
     const options: RequestInit = {
       method: config.method,
       headers: {
         'Content-Type': 'application/json',
-        ...headers,
+        ...headersObj,
       },
     }
 
-    if (config.body && ['POST', 'PUT'].includes(config.method)) {
+    if (config.body && ['POST', 'PUT', 'PATCH'].includes(config.method)) {
       options.body = this.replaceVariables(config.body, variables)
     }
 
     const response = await fetch(url, options)
-    return response.json()
+
+    // Try to parse as JSON, fallback to text
+    const contentType = response.headers.get('content-type')
+    if (contentType?.includes('application/json')) {
+      return response.json()
+    }
+    return response.text()
   }
 }
 

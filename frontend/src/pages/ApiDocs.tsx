@@ -15,6 +15,7 @@ import {
   Play,
   CheckCircle,
   XCircle,
+  Download,
 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -888,6 +889,266 @@ echo $response;
           </CardContent>
         </Card>
       )}
+
+      {/* Integrations Section */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Terminal className="h-5 w-5" />
+            Integracoes Externas
+          </CardTitle>
+          <CardDescription>
+            Scripts e configuracoes para integrar com ferramentas de monitoramento
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <Tabs defaultValue="zabbix" className="w-full">
+            <TabsList className="grid w-full grid-cols-4">
+              <TabsTrigger value="zabbix">Zabbix</TabsTrigger>
+              <TabsTrigger value="n8n">N8N</TabsTrigger>
+              <TabsTrigger value="grafana">Grafana</TabsTrigger>
+              <TabsTrigger value="shell">Shell Script</TabsTrigger>
+            </TabsList>
+
+            <TabsContent value="zabbix" className="mt-4 space-y-4">
+              <div className="bg-orange-50 dark:bg-orange-950 border border-orange-200 dark:border-orange-800 rounded-lg p-4">
+                <h4 className="font-semibold text-orange-700 dark:text-orange-300 mb-2">Zabbix - Script de Alerta</h4>
+                <p className="text-sm text-orange-600 dark:text-orange-400 mb-3">
+                  Receba alertas do Zabbix diretamente no WhatsApp
+                </p>
+
+                {/* Download Buttons */}
+                <div className="flex flex-wrap gap-3 mb-4">
+                  <a
+                    href={`${API_EXTERNAL_URL}/docs/zabbix-alert.sh`}
+                    download="zabbix-alert.sh"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-orange-600 hover:bg-orange-700 text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    <Download className="h-4 w-4" />
+                    Baixar Script (.sh)
+                  </a>
+                  <a
+                    href={`${API_EXTERNAL_URL}/docs/zabbix-mediatype.yaml`}
+                    download="zabbix-mediatype.yaml"
+                    className="inline-flex items-center gap-2 px-4 py-2 bg-zinc-700 hover:bg-zinc-800 text-white rounded-lg text-sm font-medium transition-colors"
+                  >
+                    <Download className="h-4 w-4" />
+                    Baixar MediaType (.yaml)
+                  </a>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-medium mb-1">1. Baixar o script:</p>
+                    <pre className="p-3 bg-zinc-950 text-zinc-100 rounded text-xs overflow-x-auto">
+{`curl -o /usr/lib/zabbix/alertscripts/whatsapp-alert.sh \\
+  ${API_EXTERNAL_URL}/docs/zabbix-alert.sh
+
+chmod +x /usr/lib/zabbix/alertscripts/whatsapp-alert.sh`}
+                    </pre>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium mb-1">2. Editar e colocar seu token:</p>
+                    <pre className="p-3 bg-zinc-950 text-zinc-100 rounded text-xs overflow-x-auto">
+{`nano /usr/lib/zabbix/alertscripts/whatsapp-alert.sh
+
+# Altere a linha:
+API_KEY="${apiToken}"`}
+                    </pre>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium mb-1">3. Configurar no Zabbix (opcao A - Importar YAML):</p>
+                    <ul className="text-sm list-disc list-inside space-y-1">
+                      <li>Baixe o arquivo <code className="bg-muted px-1 rounded">zabbix-mediatype.yaml</code> acima</li>
+                      <li>Administration → Media types → Import (canto superior direito)</li>
+                      <li>Selecione o arquivo YAML e importe</li>
+                      <li>Renomeie o script para <code className="bg-muted px-1 rounded">zbbx.sh</code> no servidor (ou edite o YAML)</li>
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium mb-1">3. Configurar no Zabbix (opcao B - Manual):</p>
+                    <ul className="text-sm list-disc list-inside space-y-1">
+                      <li>Administration → Media types → Create</li>
+                      <li>Name: <code className="bg-muted px-1 rounded">WhatsApp</code></li>
+                      <li>Type: <code className="bg-muted px-1 rounded">Script</code></li>
+                      <li>Script name: <code className="bg-muted px-1 rounded">whatsapp-alert.sh</code></li>
+                      <li>Parameters: <code className="bg-muted px-1 rounded">{'{ALERT.SENDTO}'}</code>, <code className="bg-muted px-1 rounded">{'{ALERT.SUBJECT}'}</code>, <code className="bg-muted px-1 rounded">{'{ALERT.MESSAGE}'}</code></li>
+                    </ul>
+                  </div>
+                  <div>
+                    <p className="text-sm font-medium mb-1">4. Adicionar ao usuario:</p>
+                    <ul className="text-sm list-disc list-inside space-y-1">
+                      <li>Administration → Users → Media</li>
+                      <li>Type: WhatsApp</li>
+                      <li>Send to: <code className="bg-muted px-1 rounded">5511999999999</code> (com DDI+DDD)</li>
+                    </ul>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="n8n" className="mt-4 space-y-4">
+              <div className="bg-purple-50 dark:bg-purple-950 border border-purple-200 dark:border-purple-800 rounded-lg p-4">
+                <h4 className="font-semibold text-purple-700 dark:text-purple-300 mb-2">N8N - HTTP Request Node</h4>
+                <p className="text-sm text-purple-600 dark:text-purple-400 mb-3">
+                  Configure um node HTTP Request para enviar mensagens
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-medium mb-1">Configuracao do Node:</p>
+                    <pre className="p-3 bg-zinc-950 text-zinc-100 rounded text-xs overflow-x-auto">
+{`Method: POST
+URL: ${API_EXTERNAL_URL}/api/messages/api/send
+
+Headers:
+  Content-Type: application/json
+  x-api-token: ${apiToken}
+
+Body (JSON):
+{
+  "to": "{{ $json.telefone }}",
+  "text": "{{ $json.mensagem }}"
+}`}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="grafana" className="mt-4 space-y-4">
+              <div className="bg-amber-50 dark:bg-amber-950 border border-amber-200 dark:border-amber-800 rounded-lg p-4">
+                <h4 className="font-semibold text-amber-700 dark:text-amber-300 mb-2">Grafana - Contact Point (Webhook)</h4>
+                <p className="text-sm text-amber-600 dark:text-amber-400 mb-3">
+                  Configure um Contact Point para alertas via WhatsApp
+                </p>
+                <div className="space-y-3">
+                  <div>
+                    <p className="text-sm font-medium mb-1">Configuracao:</p>
+                    <pre className="p-3 bg-zinc-950 text-zinc-100 rounded text-xs overflow-x-auto">
+{`URL: ${API_EXTERNAL_URL}/api/messages/api/send
+HTTP Method: POST
+
+Headers:
+  Content-Type: application/json
+  x-api-token: ${apiToken}
+
+Body:
+{
+  "to": "5511999999999",
+  "text": "🚨 Alerta Grafana\\n\\n{{ .Title }}\\n{{ .Message }}"
+}`}
+                    </pre>
+                  </div>
+                </div>
+              </div>
+            </TabsContent>
+
+            <TabsContent value="shell" className="mt-4 space-y-4">
+              <div className="bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-lg p-4">
+                <h4 className="font-semibold text-slate-700 dark:text-slate-300 mb-2">Shell Script - Zabbix / Alertas</h4>
+                <p className="text-sm text-slate-600 dark:text-slate-400 mb-3">
+                  Script para envio de alertas via WhatsApp (Zabbix, cron, etc.) - Suporta emojis e quebras de linha
+                </p>
+                <div className="relative">
+                  <pre className="p-3 bg-zinc-950 text-zinc-100 rounded text-xs overflow-x-auto">
+{`#!/bin/bash
+
+# ============================================
+# WhatsApp Manager - Script de Alerta Zabbix
+# ============================================
+
+URL="${API_EXTERNAL_URL}/api/messages/api/send"
+API_KEY="${apiToken}"
+
+PHONE="$1"
+TITULO="$2"
+MESSAGE="$3"
+
+# Concatena titulo e mensagem
+FULL_MESSAGE="\${TITULO}
+\${MESSAGE}"
+
+# Escapa para JSON
+ESCAPED="\${FULL_MESSAGE//\\\\/\\\\\\\\}"
+ESCAPED="\${ESCAPED//\\"/\\\\\\"}"
+ESCAPED="\${ESCAPED//\$'\\n'/\\\\n}"
+ESCAPED="\${ESCAPED//\$'\\t'/\\\\t}"
+ESCAPED="\${ESCAPED//\$'\\r'/}"
+
+# Envia
+RESPONSE=$(curl -s -X POST "$URL" \\
+    -H "Content-Type: application/json" \\
+    -H "x-api-token: $API_KEY" \\
+    -d "{\\"to\\": \\"$PHONE\\", \\"text\\": \\"$ESCAPED\\"}" \\
+    --connect-timeout 10 \\
+    --max-time 30)
+
+# Resultado
+if echo "$RESPONSE" | grep -q '"success":true'; then
+    echo "OK"
+    exit 0
+else
+    echo "ERRO: $RESPONSE"
+    exit 1
+fi`}
+                  </pre>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="absolute top-2 right-2 text-zinc-400 hover:text-zinc-100"
+                    onClick={() => copyToClipboard(`#!/bin/bash
+
+# ============================================
+# WhatsApp Manager - Script de Alerta Zabbix
+# ============================================
+
+URL="${API_EXTERNAL_URL}/api/messages/api/send"
+API_KEY="${apiToken}"
+
+PHONE="$1"
+TITULO="$2"
+MESSAGE="$3"
+
+# Concatena titulo e mensagem
+FULL_MESSAGE="\${TITULO}
+\${MESSAGE}"
+
+# Escapa para JSON
+ESCAPED="\${FULL_MESSAGE//\\\\/\\\\\\\\}"
+ESCAPED="\${ESCAPED//\\"/\\\\\\"}"
+ESCAPED="\${ESCAPED//\$'\\n'/\\\\n}"
+ESCAPED="\${ESCAPED//\$'\\t'/\\\\t}"
+ESCAPED="\${ESCAPED//\$'\\r'/}"
+
+# Envia
+RESPONSE=$(curl -s -X POST "$URL" \\
+    -H "Content-Type: application/json" \\
+    -H "x-api-token: $API_KEY" \\
+    -d "{\\"to\\": \\"$PHONE\\", \\"text\\": \\"$ESCAPED\\"}" \\
+    --connect-timeout 10 \\
+    --max-time 30)
+
+# Resultado
+if echo "$RESPONSE" | grep -q '"success":true'; then
+    echo "OK"
+    exit 0
+else
+    echo "ERRO: $RESPONSE"
+    exit 1
+fi`, 'shell-script')}
+                  >
+                    {copiedEndpoint === 'shell-script' ? (
+                      <Check className="h-4 w-4" />
+                    ) : (
+                      <Copy className="h-4 w-4" />
+                    )}
+                  </Button>
+                </div>
+              </div>
+            </TabsContent>
+          </Tabs>
+        </CardContent>
+      </Card>
 
       {/* Test Modal */}
       <Dialog open={showTestModal} onOpenChange={setShowTestModal}>

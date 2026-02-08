@@ -26,8 +26,11 @@ import { flowRoutes } from './modules/flows/flow.routes.js'
 import { adminRoutes } from './modules/admin/admin.routes.js'
 import { webhookEntradaRoutes } from './modules/webhook-entrada/webhook-entrada.routes.js'
 import { automationRoutes } from './modules/automations/automation.routes.js'
+import { windowSubscriberRoutes } from './modules/window-subscribers/window-subscriber.routes.js'
 import { BaileysManager } from './providers/baileys/baileys.manager.js'
 import { startControlServer } from './core/control.server.js'
+import { startWindowNotifierJob } from './jobs/window-notifier.job.js'
+import { startFlowTimeoutJob } from './jobs/flow-timeout.job.js'
 import { initializeCoreModule } from './core/core.wpp.js'
 
 const __filename = fileURLToPath(import.meta.url)
@@ -77,6 +80,13 @@ async function bootstrap() {
     decorateReply: false,
   })
 
+  // Serve docs static files
+  await fastify.register(fastifyStatic, {
+    root: path.join(__dirname, '..', 'public', 'docs'),
+    prefix: '/docs/',
+    decorateReply: false,
+  })
+
   // Serve frontend static files
   const frontendPath = path.join(__dirname, '..', '..', 'frontend', 'dist')
   await fastify.register(fastifyStatic, {
@@ -119,6 +129,7 @@ async function bootstrap() {
   await fastify.register(adminRoutes, { prefix: '/api/admin' })
   await fastify.register(webhookEntradaRoutes, { prefix: '/api/webhook-entrada' })
   await fastify.register(automationRoutes, { prefix: '/api/automations' })
+  await fastify.register(windowSubscriberRoutes, { prefix: '/api/window-subscribers' })
 
   // Start Fastify server
   await fastify.listen({ port: env.PORT, host: '0.0.0.0' })
@@ -177,6 +188,12 @@ async function bootstrap() {
   }
 
   console.log(`Server running on http://0.0.0.0:${env.PORT}`)
+
+  // Start window notifier job (for 24h window management)
+  startWindowNotifierJob()
+
+  // Start flow timeout job (closes inactive flow sessions)
+  startFlowTimeoutJob()
 
   // Initialize control server (separate port)
   try {

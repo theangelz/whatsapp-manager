@@ -17,7 +17,9 @@ import {
   Settings,
   Webhook,
   LogOut,
+  Zap,
 } from 'lucide-react'
+import { useFacebookSDK } from '@/hooks/useFacebookSDK'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -52,6 +54,7 @@ import type { Instance } from '@/types'
 
 export function Instances() {
   const queryClient = useQueryClient()
+  const { startCoexistenceSignup, isLoading: fbLoading, isSDKLoaded } = useFacebookSDK()
   const [showCreateModal, setShowCreateModal] = useState(false)
   const [showQRModal, setShowQRModal] = useState(false)
   const [showConfigModal, setShowConfigModal] = useState(false)
@@ -63,7 +66,7 @@ export function Instances() {
   const [newInstance, setNewInstance] = useState({
     name: '',
     description: '',
-    channel: 'BAILEYS' as 'BAILEYS' | 'CLOUD_API',
+    channel: 'BAILEYS' as 'BAILEYS' | 'CLOUD_API' | 'COEXISTENCE',
   })
   const [cloudApiConfig, setCloudApiConfig] = useState({
     wabaId: '',
@@ -126,7 +129,7 @@ export function Instances() {
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['instances'] })
       setShowCreateModal(false)
-      setNewInstance({ name: '', description: '', channel: 'BAILEYS' })
+      setNewInstance({ name: '', description: '', channel: 'BAILEYS' as 'BAILEYS' | 'CLOUD_API' | 'COEXISTENCE' })
     },
     onError: (error: any) => {
       const msg = error.response?.data?.error || error.message || 'Erro ao criar instância'
@@ -237,6 +240,53 @@ export function Instances() {
       alert(`Erro ao sincronizar: ${error.response?.data?.error || error.message}`)
     },
   })
+
+  const embeddedSignupMutation = useMutation({
+    mutationFn: async ({ id, data }: { id: string; data: { code: string; wabaId?: string; phoneNumberId?: string } }) => {
+      const response = await api.post(`/instances/${id}/embedded-signup`, data)
+      return response.data
+    },
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ['instances'] })
+      alert('Coexistence conectado com sucesso!')
+    },
+    onError: (error: any) => {
+      const msg = error.response?.data?.error || error.message || 'Erro ao conectar Coexistence'
+      alert(msg)
+    },
+  })
+
+  const handleCoexistenceConnect = async (instance: Instance) => {
+    const configId = import.meta.env.VITE_META_CONFIG_ID
+
+    if (!configId) {
+      alert('VITE_META_CONFIG_ID não configurado. Verifique as variáveis de ambiente.')
+      return
+    }
+
+    if (!isSDKLoaded) {
+      alert('Facebook SDK ainda não foi carregado. Aguarde um momento e tente novamente.')
+      return
+    }
+
+    try {
+      // 1. Start Embedded Signup (opens Meta modal)
+      const result = await startCoexistenceSignup(configId)
+
+      // 2. Send credentials to backend
+      await embeddedSignupMutation.mutateAsync({
+        id: instance.id,
+        data: {
+          code: result.code,
+          wabaId: result.wabaId,
+          phoneNumberId: result.phoneNumberId,
+        },
+      })
+    } catch (error: any) {
+      console.error('Coexistence connect error:', error)
+      // Error is handled by the mutation or the hook
+    }
+  }
 
   useEffect(() => {
     connectSocket()
@@ -451,7 +501,7 @@ export function Instances() {
                           </DropdownMenuItem>
                         </>
                       )}
-                      {instance.channel === 'CLOUD_API' && instance.status === 'CONNECTED' && (
+                      {(instance.channel === 'CLOUD_API' || instance.channel === 'COEXISTENCE') && instance.status === 'CONNECTED' && (
                         <DropdownMenuItem
                           onClick={() => disconnectMutation.mutate(instance.id)}
                         >
@@ -465,13 +515,13 @@ export function Instances() {
                         <Copy className="mr-2 h-4 w-4" />
                         Copiar Token
                       </DropdownMenuItem>
-                      {instance.channel === 'CLOUD_API' && (
+                      {(instance.channel === 'CLOUD_API' || instance.channel === 'COEXISTENCE') && (
                         <>
                           <DropdownMenuItem
                             onClick={() => handleOpenConfig(instance)}
                           >
                             <Settings className="mr-2 h-4 w-4" />
-                            Configurar Cloud API
+                            {instance.channel === 'COEXISTENCE' ? 'Configurar Coexistence' : 'Configurar Cloud API'}
                           </DropdownMenuItem>
                           {instance.status === 'CONNECTED' && (
                             <DropdownMenuItem
@@ -510,10 +560,20 @@ export function Instances() {
                   <Badge variant={getStatusColor(instance.status) as any}>
                     {getStatusLabel(instance.status)}
                   </Badge>
-                  <Badge variant="outline">
-                    {instance.channel === 'BAILEYS' ? 'Baileys' : 'Cloud API'}
+                  <Badge
+                    variant="outline"
+                    className={instance.channel === 'COEXISTENCE' ? 'bg-purple-500/10 text-purple-600 border-purple-500' : ''}
+                  >
+                    {instance.channel === 'BAILEYS' ? 'Baileys' : instance.channel === 'COEXISTENCE' ? 'Coexistence' : 'Cloud API'}
                   </Badge>
                 </div>
+
+                {/* Coexistence rate limit indicator */}
+                {instance.channel === 'COEXISTENCE' && instance.status === 'CONNECTED' && (
+                  <div className="flex items-center gap-1 text-xs text-purple-600 bg-purple-500/10 rounded px-2 py-1">
+                    <span>20 MPS limit</span>
+                  </div>
+                )}
 
                 {/* Metrics */}
                 <div className="grid grid-cols-2 gap-4 pt-2 border-t">
@@ -533,8 +593,8 @@ export function Instances() {
                   </div>
                 </div>
 
-                {/* Webhook URL for Cloud API */}
-                {instance.channel === 'CLOUD_API' && (
+                {/* Webhook URL for Cloud API / Coexistence */}
+                {(instance.channel === 'CLOUD_API' || instance.channel === 'COEXISTENCE') && (
                   <div className="pt-2 border-t">
                     <Label className="text-xs flex items-center gap-1 mb-1">
                       <Webhook className="h-3 w-3" />
@@ -582,6 +642,21 @@ export function Instances() {
                   <p className="text-sm text-muted-foreground text-center">
                     Configure as credenciais da Meta nas configurações
                   </p>
+                )}
+                {instance.channel === 'COEXISTENCE' && instance.status === 'DISCONNECTED' && (
+                  <Button
+                    className="w-full bg-purple-600 hover:bg-purple-700 text-white"
+                    onClick={() => handleCoexistenceConnect(instance)}
+                    disabled={fbLoading || embeddedSignupMutation.isPending || !isSDKLoaded || !!systemBlocked}
+                    title={systemBlocked ? 'Sistema bloqueado' : !isSDKLoaded ? 'Carregando Facebook SDK...' : undefined}
+                  >
+                    {(fbLoading || embeddedSignupMutation.isPending) ? (
+                      <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    ) : (
+                      <Zap className="mr-2 h-4 w-4" />
+                    )}
+                    Conectar Coexistence
+                  </Button>
                 )}
               </CardContent>
             </Card>
@@ -644,7 +719,7 @@ export function Instances() {
               <Label htmlFor="channel">Canal</Label>
               <Select
                 value={newInstance.channel}
-                onValueChange={(value: 'BAILEYS' | 'CLOUD_API') =>
+                onValueChange={(value: 'BAILEYS' | 'CLOUD_API' | 'COEXISTENCE') =>
                   setNewInstance({ ...newInstance, channel: value })
                 }
               >
@@ -654,9 +729,25 @@ export function Instances() {
                 <SelectContent>
                   <SelectItem value="BAILEYS">Baileys (QR Code)</SelectItem>
                   <SelectItem value="CLOUD_API">Cloud API (Meta)</SelectItem>
+                  <SelectItem value="COEXISTENCE">Coexistence (App + API)</SelectItem>
                 </SelectContent>
               </Select>
             </div>
+
+            {/* Coexistence limitations warning */}
+            {newInstance.channel === 'COEXISTENCE' && (
+              <div className="bg-purple-500/10 border border-purple-500 text-purple-600 dark:text-purple-400 p-3 rounded-lg text-sm space-y-2">
+                <p className="font-semibold">Limitações do Coexistence:</p>
+                <ul className="list-disc list-inside space-y-1 text-xs">
+                  <li>Throughput limitado a 20 msg/seg (vs 80 da Cloud API)</li>
+                  <li>Mensagens do App NÃO aparecem nos webhooks</li>
+                  <li>Sem selo azul de verificação (OBA)</li>
+                  <li>Funciona em: App, WhatsApp Web, Mac</li>
+                  <li>NÃO funciona em: WhatsApp Windows</li>
+                  <li>Custo: Via App = grátis, Via API = cobra</li>
+                </ul>
+              </div>
+            )}
           </div>
 
           <DialogFooter>
@@ -722,12 +813,30 @@ export function Instances() {
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Settings className="h-5 w-5" />
-              Configurar Cloud API
+              {configInstance?.channel === 'COEXISTENCE' ? 'Configurar Coexistence' : 'Configurar Cloud API'}
+              {configInstance?.channel === 'COEXISTENCE' && (
+                <Badge variant="outline" className="bg-purple-500/10 text-purple-600 border-purple-500 text-xs">
+                  App + API
+                </Badge>
+              )}
             </DialogTitle>
             <DialogDescription>
               Configure as credenciais da Meta para a instância {configInstance?.name}
             </DialogDescription>
           </DialogHeader>
+
+          {/* Coexistence info */}
+          {configInstance?.channel === 'COEXISTENCE' && (
+            <div className="bg-purple-500/10 border border-purple-500 text-purple-600 dark:text-purple-400 p-3 rounded-lg text-sm">
+              <p className="font-semibold mb-2">Sobre o Coexistence:</p>
+              <ul className="list-disc list-inside space-y-1 text-xs">
+                <li>Use o mesmo número do App WhatsApp Business</li>
+                <li>Mensagens via App/WhatsApp Web são gratuitas</li>
+                <li>Apenas mensagens via API são cobradas</li>
+                <li>Rate limit: 20 mensagens por segundo</li>
+              </ul>
+            </div>
+          )}
 
           <div className="space-y-4 py-4">
             <div className="space-y-2">

@@ -171,6 +171,50 @@ export class CloudAPIProvider {
     return response.data
   }
 
+  /**
+   * Send interactive message with reply buttons
+   * Used for quick replies like Sim/Não
+   */
+  async sendInteractiveButtons(
+    to: string,
+    bodyText: string,
+    buttons: Array<{ id: string; title: string }>,
+    headerText?: string,
+    footerText?: string
+  ) {
+    const interactive: any = {
+      type: 'button',
+      body: { text: bodyText },
+      action: {
+        buttons: buttons.map(btn => ({
+          type: 'reply',
+          reply: {
+            id: btn.id,
+            title: btn.title.substring(0, 20), // Max 20 chars for button title
+          },
+        })),
+      },
+    }
+
+    if (headerText) {
+      interactive.header = { type: 'text', text: headerText }
+    }
+
+    if (footerText) {
+      interactive.footer = { text: footerText }
+    }
+
+    const response = await this.client.post(`/${this.phoneNumberId}/messages`, {
+      messaging_product: 'whatsapp',
+      recipient_type: 'individual',
+      to,
+      type: 'interactive',
+      interactive,
+    })
+
+    return response.data
+  }
+
   async getPhoneNumberInfo() {
     const response = await this.client.get(`/${this.phoneNumberId}`, {
       params: {
