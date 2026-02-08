@@ -1,17 +1,88 @@
 # WhatsApp Manager API
 
-Sistema completo de gerenciamento de WhatsApp com suporte a Baileys (QR Code) e Meta Cloud API.
+Sistema completo de gerenciamento de WhatsApp com suporte multi-provedor: Baileys (QR Code), Meta Cloud API e Coexistencia (hibrido).
 
 ## Funcionalidades
 
-- Multi-instancias (varios numeros WhatsApp)
-- Suporte a Baileys (conexao via QR Code)
-- Suporte a Meta Cloud API (WhatsApp Business)
-- FlowBuilder visual para criar chatbots
-- Integracoes com Typebot e n8n
-- Webhooks personalizados
-- Painel administrativo
-- API REST completa
+### Conexao e Instancias
+- Multi-instancias (varios numeros WhatsApp simultaneos)
+- **Baileys** - Conexao via QR Code (WebSocket, sem custos)
+- **Meta Cloud API** - WhatsApp Business oficial com templates
+- **Coexistencia** - Canal hibrido: Baileys (envio) + Cloud API (recebimento) na mesma instancia
+- Reconexao automatica de instancias
+- Status em tempo real via Socket.IO
+
+### Flow Builder (Chatbot Visual)
+- Editor visual drag-and-drop com React Flow
+- Nodes disponiveis: Mensagem, Imagem, Audio, Video, Documento, Menu, Botoes, Lista, Condicao, Delay, Variavel, HTTP Request, Transferir, Ir para Fluxo, Fim
+- **Handles em 4 lados** (Top/Bottom/Left/Right) com labels coloridos por opcao
+- **Condition switch/case** com multiplos valores, operadores (equals, contains, startsWith, regex) e fallback
+- **Aguardar resposta** (waitForInput) em nodes de Mensagem - pergunta ao usuario e salva em variavel
+- **HTTP Request** com mapeamento de resposta (suporte a nested paths ex: `tokens.access_token`)
+- **Node Delay** para pausar execucao entre nodes (1-300 segundos)
+- Teste de requisicoes HTTP direto no editor (proxy server-side, sem CORS)
+- Custom edges com botao de deletar e angulos retos
+- Gatilhos: palavra-chave, todas mensagens, resposta de botao, resposta de lista, webhook externo
+- Variaveis do sistema: `{{_contactName}}`, `{{_contactPhone}}`, `{{_triggerMessage}}`, `{{_menuSelection}}`
+
+### Timeout de Inatividade
+- Encerramento automatico de sessoes de fluxo por inatividade
+- Tempo configuravel por fluxo (1-60 minutos, default 5 min)
+- Mensagem de encerramento customizavel
+- Job automatico verifica sessoes a cada 30 segundos
+
+### Mensagens
+- Envio de texto, imagem, audio, video, documento
+- Mensagens interativas (botoes e listas) via Baileys com NativeFlowMessage
+- Envio de templates Meta com componentes dinamicos (header, body, buttons)
+- Suporte a ORDER_DETAILS template type
+- Upload de media via Meta Graph API
+- Historico completo de mensagens (enviadas/recebidas)
+
+### Janela 24 Horas (Window Subscribers)
+- Gestao da janela de 24h do WhatsApp Business
+- Cadastro de numeros que precisam de janela aberta
+- Job automatico monitora e notifica antes da janela expirar
+- Pagina frontend para gerenciar subscribers
+
+### Automacoes
+- Disparo automatico de mensagens via API externa
+- Template routing (FATURA_DIA, DISPARO_LIVRE)
+- Template codes ($Template1, $Template2, etc.) para roteamento automatico
+- Variable mapping com campos customizados
+- Logs detalhados de execucao por automacao
+
+### Integracoes
+- **Typebot** - Integre chatbots Typebot com deteccao de conflito com Flow nativo
+- **n8n** - Webhooks para automacao com n8n
+- **Webhooks personalizados** - Receba eventos em qualquer URL
+- **Webhook de entrada** - Receba dados externos para disparar acoes
+
+### Campanhas
+- Disparo em massa com controle de velocidade
+- Delay configuravel entre mensagens
+- Status: rascunho, agendada, em execucao, pausada, concluida
+- Contadores de enviados, entregues e falhos
+
+### Administracao
+- Painel administrativo completo
+- Gerenciamento de usuarios e empresas
+- Controle de permissoes (Admin/Operador)
+- Sistema de atualizacao automatica com progresso em tempo real
+- API Docs integrada ao frontend
+- Rate limiter para protecao de endpoints
+
+## Stack Tecnologica
+
+| Componente | Tecnologia |
+|---|---|
+| Backend | Node.js + Fastify + TypeScript |
+| Frontend | React + Vite + TypeScript + Tailwind CSS |
+| Banco de Dados | PostgreSQL + Prisma ORM |
+| Cache/Filas | Redis + Bull |
+| WebSocket | Socket.IO |
+| WhatsApp | @whiskeysockets/baileys ^6.6.0 |
+| Process Manager | PM2 |
 
 ## Requisitos
 
@@ -25,7 +96,7 @@ Sistema completo de gerenciamento de WhatsApp com suporte a Baileys (QR Code) e 
 
 ```bash
 # Clonar repositorio
-git clone https://github.com/seu-usuario/whatsapp-manager.git
+git clone https://github.com/theangelz/whatsapp-manager.git
 cd whatsapp-manager
 
 # Executar instalador
@@ -58,7 +129,7 @@ npm install -g pm2
 ### 2. Configurar banco de dados
 
 ```bash
-# Iniciar PostgreSQL com Docker
+# Iniciar PostgreSQL e Redis com Docker
 docker run -d \
   --name whatsapp_postgres \
   -e POSTGRES_USER=whatsapp \
@@ -66,6 +137,11 @@ docker run -d \
   -e POSTGRES_DB=whatsapp_manager \
   -p 5432:5432 \
   postgres:15-alpine
+
+docker run -d \
+  --name whatsapp_redis \
+  -p 6379:6379 \
+  redis:7-alpine
 ```
 
 ### 3. Configurar backend
@@ -95,18 +171,14 @@ npm run build
 ### 5. Iniciar aplicacao
 
 ```bash
-# Backend
 cd backend
 pm2 start dist/server.js --name whatsapp-backend
-
-# Frontend
-cd frontend
-npm install -g serve
-pm2 start "serve -s dist -l 5454" --name whatsapp-frontend
 
 pm2 save
 pm2 startup
 ```
+
+O frontend e servido automaticamente pelo backend (SPA fallback).
 
 ## Variaveis de Ambiente
 
@@ -114,9 +186,11 @@ pm2 startup
 
 ```env
 DATABASE_URL="postgresql://user:password@localhost:5432/whatsapp_manager"
+REDIS_URL="redis://localhost:6379"
 JWT_SECRET="seu_jwt_secret_muito_seguro"
 PORT=3333
 NODE_ENV=production
+FRONTEND_URL="https://seu-dominio.com"
 BAILEYS_SESSIONS_PATH="./sessions"
 META_WEBHOOK_VERIFY_TOKEN="token_para_meta"
 ```
@@ -150,22 +224,46 @@ VITE_API_URL=https://seu-dominio.com/api
 
 ```
 whatsapp-manager/
-├── backend/           # API Node.js + Fastify
+├── backend/
 │   ├── src/
-│   │   ├── config/    # Configuracoes
-│   │   ├── middlewares/
-│   │   ├── modules/   # Modulos da API
-│   │   └── providers/ # Baileys, Cloud API
-│   └── prisma/        # Schema do banco
-├── frontend/          # React + Vite
+│   │   ├── config/         # Configuracoes (env, database, redis)
+│   │   ├── core/           # Modulo core e control server
+│   │   ├── jobs/           # Background jobs (flow-timeout, window-notifier)
+│   │   ├── middlewares/    # Rate limiter, auth
+│   │   ├── modules/
+│   │   │   ├── admin/      # Painel admin e atualizacoes
+│   │   │   ├── auth/       # Autenticacao JWT
+│   │   │   ├── automations/# Automacoes de disparo
+│   │   │   ├── campaigns/  # Campanhas em massa
+│   │   │   ├── contacts/   # Gerenciamento de contatos
+│   │   │   ├── flows/      # Flow Builder engine + routes
+│   │   │   ├── instances/  # Gerenciamento de instancias
+│   │   │   ├── messages/   # Envio e historico de mensagens
+│   │   │   ├── n8n/        # Integracao n8n
+│   │   │   ├── templates/  # Templates Meta
+│   │   │   ├── typebot/    # Integracao Typebot
+│   │   │   ├── webhooks/   # Webhooks Cloud API
+│   │   │   ├── webhook-entrada/ # Webhooks de entrada
+│   │   │   └── window-subscribers/ # Janela 24h
+│   │   └── providers/
+│   │       ├── baileys/    # Provider Baileys (QR Code)
+│   │       └── cloud-api/  # Provider Meta Cloud API
+│   └── prisma/             # Schema e migrations
+├── frontend/
 │   ├── src/
 │   │   ├── components/
-│   │   ├── pages/
-│   │   └── services/
-└── install.sh         # Instalador automatico
+│   │   │   ├── flow-builder/  # CustomNodes, NodeProperties, Sidebar, Edges
+│   │   │   ├── layout/        # Sidebar, Header
+│   │   │   └── ui/            # Componentes base (shadcn/ui)
+│   │   ├── hooks/             # Custom hooks
+│   │   ├── pages/             # Paginas da aplicacao
+│   │   ├── services/          # API client
+│   │   └── types/             # TypeScript types
+│   └── index.html
+└── install.sh                 # Instalador automatico
 ```
 
-## API Endpoints Principais
+## API Endpoints
 
 ### Autenticacao
 - `POST /api/auth/register` - Registro
@@ -173,45 +271,81 @@ whatsapp-manager/
 
 ### Instancias
 - `GET /api/instances` - Listar instancias
-- `POST /api/instances` - Criar instancia
+- `POST /api/instances` - Criar instancia (BAILEYS, CLOUD_API ou COEXISTENCE)
 - `POST /api/instances/:id/connect` - Conectar (gerar QR)
 - `POST /api/instances/:id/disconnect` - Desconectar
+- `DELETE /api/instances/:id` - Remover instancia
 
 ### Mensagens
-- `POST /api/messages/:instanceId/send` - Enviar mensagem
-- `POST /api/messages/:instanceId/send-template` - Enviar template
+- `POST /api/messages/:instanceId/send` - Enviar mensagem (texto, imagem, audio, video, documento)
+- `POST /api/messages/:instanceId/send-template` - Enviar template Meta
+- `GET /api/messages/:instanceId` - Historico de mensagens
 
 ### Fluxos (Chatbot)
 - `GET /api/flows` - Listar fluxos
 - `POST /api/flows` - Criar fluxo
-- `PUT /api/flows/:id/canvas` - Salvar canvas
+- `GET /api/flows/:id` - Detalhes do fluxo com nodes e edges
+- `PUT /api/flows/:id` - Atualizar configuracoes (trigger, timeout, mensagem de encerramento)
+- `PUT /api/flows/:id/canvas` - Salvar canvas (nodes + edges)
+- `POST /api/flows/test-http` - Proxy para testar requisicoes HTTP
+
+### Automacoes
+- `GET /api/automations` - Listar automacoes
+- `POST /api/automations` - Criar automacao
+- `POST /api/automations/:token/trigger` - Disparar automacao via token
 
 ### Webhooks
 - `GET /api/webhook/cloud-api/:instanceId` - Verificacao Meta
 - `POST /api/webhook/cloud-api/:instanceId` - Eventos Meta
+- `POST /api/webhook-entrada/:companyId` - Webhook de entrada
+
+### Window Subscribers
+- `GET /api/window-subscribers` - Listar subscribers
+- `POST /api/window-subscribers` - Criar subscriber
+- `DELETE /api/window-subscribers/:id` - Remover subscriber
 
 ## Comandos Uteis
 
 ```bash
 # Ver logs
 pm2 logs whatsapp-backend
-pm2 logs whatsapp-frontend
 
 # Reiniciar
-pm2 restart all
+pm2 restart whatsapp-backend
 
 # Status
 pm2 status
 
-# Rebuild
+# Rebuild completo
 cd backend && npm run build
 cd frontend && npm run build
-pm2 restart all
+pm2 restart whatsapp-backend
 ```
 
-## Suporte
+## Changelog
 
-Para suporte, abra uma issue no GitHub ou entre em contato.
+### v2.2.0
+- Flow Builder com handles em 4 lados e labels coloridos
+- Condition switch/case com multiplos valores e fallback
+- MESSAGE com waitForInput para coletar respostas
+- HTTP proxy para teste de requisicoes sem CORS
+- Timeout de inatividade configuravel com mensagem customizavel
+- Canal Coexistencia (Baileys + Cloud API hibrido)
+- Window Subscribers com job de notificacao
+- Templates ORDER_DETAILS com auto variaveis
+- Automacoes com template routing Atlaz
+- Rate limiter, API Docs, melhorias gerais
+
+### v2.1.12
+- ORDER_DETAILS templates e auto variaveis
+- Melhorias Atlaz
+
+### v2.1.11
+- Otimizacao Baileys e botao reiniciar
+- Deteccao de conflito Typebot vs Flow
+
+### v2.1.9
+- Sistema de atualizacao automatica com SSE
 
 ---
 
